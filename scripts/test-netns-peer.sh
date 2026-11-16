@@ -6,6 +6,7 @@
 # 10.99.0.0/24 (split route), so host routing, DNS and other VPNs are untouched.
 #
 #   sudo scripts/test-netns-peer.sh up     # prints the client profile path
+#   (or: pkexec "$PWD/scripts/test-netns-peer.sh" up  when no terminal is available)
 #   sudo scripts/test-netns-peer.sh down   # removes everything it created
 #
 # Requires: iproute2, wireguard-tools (wg), kernel wireguard module.
@@ -27,7 +28,7 @@ die() {
 }
 
 up() {
-	[[ $EUID -eq 0 ]] || die "run with sudo"
+	[[ $EUID -eq 0 ]] || die "run as root (sudo or pkexec)"
 	command -v wg >/dev/null || die "wireguard-tools is not installed (apt install wireguard-tools)"
 	ip netns list | grep -qw "$NS" && die "namespace $NS already exists; run '$0 down' first"
 
@@ -53,7 +54,12 @@ up() {
 	ip -n "$NS" addr add "$SERVER_TUN" dev wg0
 	ip -n "$NS" link set wg0 up
 
-	local owner="${SUDO_USER:-root}"
+	# Invoking user: sudo sets SUDO_USER, pkexec sets PKEXEC_UID.
+	local owner="${SUDO_USER:-}"
+	if [[ -z $owner && -n ${PKEXEC_UID:-} ]]; then
+		owner="$(id -nu "$PKEXEC_UID")"
+	fi
+	owner="${owner:-root}"
 	local conf="$DIR/aegis-netns-test.conf"
 	cat >"$conf" <<CONF
 # Throwaway profile for the isolated aegis-peer test namespace.
@@ -73,7 +79,7 @@ CONF
 }
 
 down() {
-	[[ $EUID -eq 0 ]] || die "run with sudo"
+	[[ $EUID -eq 0 ]] || die "run as root (sudo or pkexec)"
 	ip netns del "$NS" 2>/dev/null || true # also removes the veth pair
 	ip link del "$HOST_IF" 2>/dev/null || true
 	rm -rf "$DIR"

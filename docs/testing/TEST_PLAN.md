@@ -6,7 +6,7 @@
 pnpm audit, gitleaks (CI).
 
 ## Live Linux, non-disruptive (developer host)
-1. `sudo scripts/test-netns-peer.sh up` (isolated namespace, split route 10.99.0.0/24)
+1. `sudo scripts/test-netns-peer.sh up` (or `pkexec <abs path> up` without a terminal; isolated namespace, split route 10.99.0.0/24)
 2. `cargo run -p aegis-linux --example nm_live -- /run/aegis-test/aegis-netns-test.conf`
 3. Expect PASS for: import, connect, ping 10.99.0.1, server response confirmed,
    disconnect, delete, no leftover interface/route/NM connection

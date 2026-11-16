@@ -2,6 +2,36 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-16 — LIVE split-route tunnel through NetworkManager (first real tunnel)
+
+Host: Debian forky/sid, KDE Plasma Wayland, kernel 7.2.15, NetworkManager 1.58.1,
+Tailscale active. Peer: `scripts/test-netns-peer.sh up` run via `pkexec`
+(isolated namespace `aegis-peer`, WireGuard server 10.99.0.1, endpoint
+10.200.0.2:51820 over veth). Test: `target/debug/examples/nm_live
+/run/aegis-test/aegis-netns-test.conf`, run as the normal (unprivileged) user.
+
+| Step | Result |
+|---|---|
+| Import profile | PASS: route kind Split |
+| Connect (NM AddConnection2 + ActivateConnection via Polkit, no root) | PASS in 282 ms |
+| `ping -c 3 10.99.0.1` through the tunnel | PASS: 3/3 received |
+| Engine reports server response confirmed | PASS: `Connected { peer: Confirmed }`, interface `aegis-874e8416`, rx 476 B / tx 564 B |
+| Disconnect | PASS: state Disconnected |
+| Delete profile | PASS |
+| No leftover `aegis-*` interface | PASS |
+| No leftover 10.99.0.0/24 route | PASS |
+| No leftover Aegis NetworkManager connection | PASS: 0 |
+
+Host state before vs after (`ip route/rule show table all` v4+v6, `resolvectl dns`,
+`nmcli connection show`): policy rules **identical**, DNS **identical**, NM
+connection list **identical**. Routes differ only by the test peer's own
+`aegis-veth0` link routes (created by the script, removed by `down`).
+
+Not covered by this run: full-tunnel routing, DNS/IPv6 leak behaviour, kill
+switch, reconnect after a real drop, NM restart, suspend/resume, reboot, and
+the desktop UI driving the connection (the test drives the same `Engine` the
+UI uses). Verification of the NM keyfile permissions was not done.
+
 ## 2026-11-16 (later) — tauri-plugin-notification → notify-rust 4.19
 
 | Check | Command | Result |

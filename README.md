@@ -3,8 +3,8 @@
 A lightweight, open-source WireGuard® client for Linux and Windows 11, built with
 Rust, Tauri 2 and React. Working name.
 
-> **Status: pre-alpha.** The Linux NetworkManager backend is implemented but has
-> not yet passed a live tunnel test. The Windows backend is not implemented.
+> **Status: pre-alpha.** The Linux NetworkManager backend has passed a live
+> split-route tunnel test; full-tunnel and leak tests have not been run. The Windows backend is not implemented.
 > There is no kill switch yet. Do not rely on this for protection. See
 > [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/testing/TEST_RESULTS.md](docs/testing/TEST_RESULTS.md).
 
@@ -24,7 +24,7 @@ Rust, Tauri 2 and React. Working name.
 
 | Platform | Status |
 |---|---|
-| Linux with NetworkManager ≥ 1.16 (Ubuntu, Debian, Fedora; GNOME/KDE) | Implemented, live test pending |
+| Linux with NetworkManager ≥ 1.16 (Ubuntu, Debian, Fedora; GNOME/KDE) | Split-route live test passed on Debian/KDE; rest of matrix pending |
 | Linux without NetworkManager | Not supported yet (shown as unavailable) |
 | Windows 11 x64 | Not implemented |
 
