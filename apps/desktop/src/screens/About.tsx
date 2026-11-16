@@ -22,7 +22,7 @@ export function About() {
                   : "None available"}
           </Row>
           <Row label="License">MIT or Apache-2.0</Row>
-          <Row label="Source">github.com/aegis-vpn/aegis-vpn</Row>
+          <Row label="Source">github.com/mikeholp87/aegis-vpn</Row>
           <Row label="Security policy">SECURITY.md in the repository</Row>
         </dl>
       </Panel>

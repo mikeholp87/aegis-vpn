@@ -4,6 +4,17 @@ all-features = false
 [advisories]
 version = 2
 yanked = "deny"
+# Unmaintained crates with no safe upgrade, all pulled in by Tauri dependencies
+# we cannot change. Revisit on every Tauri / plugin update.
+ignore = [
+  # zbus 5 internals, merged into zbus 6 (we use zbus 6). Only
+  # tauri-plugin-single-instance 2.5.5 still depends on zbus 5.
+  { id = "RUSTSEC-2026-0370", reason = "zvariant 5 via tauri-plugin-single-instance; no zbus 6 release yet" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names 4 via tauri-plugin-single-instance; no zbus 6 release yet" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive 5 via tauri-plugin-single-instance; no zbus 6 release yet" },
+  # Build-time proc macro of glib 0.18 (gtk3 stack used by tauri/tray-icon on Linux).
+  { id = "RUSTSEC-2024-0370", reason = "proc-macro-error via glib-macros 0.18 (tauri gtk3 stack)" },
+]
 
 [licenses]
 version = 2
