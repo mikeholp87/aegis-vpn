@@ -59,7 +59,8 @@ up() {
 	CLIENT_TUN6="fd99::$host/128"
 	ip netns list | grep -qw "$NS" && die "namespace $NS already exists; run '$0 down' first"
 
-	install -d -m 0700 "$DIR"
+	[[ ! -e $DIR && ! -L $DIR ]] || die "runtime directory already exists; run '$0 down' first"
+	install -d -m 0711 "$DIR"
 	umask 077
 	wg genkey >"$DIR/server.key"
 	wg genkey >"$DIR/client.key"
@@ -122,17 +123,18 @@ Endpoint = ${NS_ADDR%/*}:${PORT}
 AllowedIPs = ${allowed}
 PersistentKeepalive = 25
 CONF
-	chown "$owner" "$DIR" "$conf"
+	chown "$owner" "$conf"
 	chmod 0600 "$conf"
 	echo "$conf"
 }
 
 down() {
 	[[ $EUID -eq 0 ]] || die "run as root (sudo or pkexec)"
-	# Processes are not killed when a namespace is deleted.
-	if [[ -f $DIR/dnsmasq.pid ]]; then
-		kill "$(cat "$DIR/dnsmasq.pid")" 2>/dev/null || true
-	fi
+	# Read process ids from the kernel, never from caller-controlled runtime files.
+	local pid
+	while read -r pid; do
+		[[ $pid =~ ^[0-9]+$ ]] && kill -- "$pid" 2>/dev/null || true
+	done < <(ip netns pids "$NS" 2>/dev/null)
 	ip netns del "$NS" 2>/dev/null || true # also removes the veth pair
 	ip link del "$HOST_IF" 2>/dev/null || true
 	rm -rf "$DIR"

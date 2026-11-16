@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-refresh-server-health"
+description = "Enables the refresh_server_health command without any pre-configured scope."
+commands.allow = ["refresh_server_health"]
+
+[[permission]]
+identifier = "deny-refresh-server-health"
+description = "Denies the refresh_server_health command without any pre-configured scope."
+commands.deny = ["refresh_server_health"]

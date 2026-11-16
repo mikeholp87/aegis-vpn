@@ -38,3 +38,6 @@ aegis-windows.workspace = true
 
 [lints]
 workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+glib = "=0.18.5"

@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { Activity, Info, KeyRound, LayoutDashboard, Settings as SettingsIcon, X } from "lucide-react";
+import { Activity, Globe, Info, KeyRound, LayoutDashboard, Settings as SettingsIcon, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Dot } from "./components/ui";
 import { stateTone } from "./lib/connection";
@@ -7,11 +7,13 @@ import { StoreContext, useAppStore, useStore } from "./lib/store";
 import { About } from "./screens/About";
 import { ActivityScreen } from "./screens/Activity";
 import { Dashboard } from "./screens/Dashboard";
+import { Locations } from "./screens/Locations";
 import { Profiles } from "./screens/Profiles";
 import { SettingsScreen } from "./screens/Settings";
 
 const screens = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "locations", label: "Locations", icon: Globe },
   { id: "profiles", label: "Profiles", icon: KeyRound },
   { id: "activity", label: "Activity", icon: Activity },
   { id: "settings", label: "Settings", icon: SettingsIcon },
@@ -57,15 +59,12 @@ function Shell() {
         </div>
       )}
       <div className="flex min-h-0 flex-1">
-        <nav
-          aria-label="Main"
-          className="flex w-48 shrink-0 flex-col border-r border-line bg-surface max-[720px]:w-14"
-        >
-          <div className="flex items-center gap-2 px-4 py-4 max-[720px]:justify-center max-[720px]:px-0">
-            <Shield />
-            <span className="font-semibold tracking-tight max-[720px]:hidden">Aegis VPN</span>
+        <nav aria-label="Main" className="flex w-52 shrink-0 flex-col max-[720px]:w-16">
+          <div className="flex items-center gap-2.5 px-5 pt-5 pb-6 max-[720px]:justify-center max-[720px]:px-0">
+            <Shield confirmed={tone === "ok"} />
+            <span className="text-[17px] font-bold tracking-[-0.01em] max-[720px]:hidden">Aegis VPN</span>
           </div>
-          <ul className="flex flex-col gap-0.5 px-2">
+          <ul className="flex flex-col gap-1 px-3">
             {screens.map((s) => (
               <li key={s.id}>
                 <button
@@ -73,13 +72,13 @@ function Shell() {
                   onClick={() => setScreen(s.id)}
                   aria-current={screen === s.id ? "page" : undefined}
                   title={s.label}
-                  className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] max-[720px]:justify-center ${
+                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[14px] max-[720px]:justify-center max-[720px]:px-0 ${
                     screen === s.id
-                      ? "bg-raised font-medium text-fg"
-                      : "text-muted hover:bg-raised hover:text-fg"
+                      ? "bg-surface font-semibold text-fg shadow-[0_1px_2px_rgb(10_16_22/0.08)] ring-1 ring-line"
+                      : "text-muted hover:bg-surface/60 hover:text-fg"
                   }`}
                 >
-                  <s.icon size={16} aria-hidden />
+                  <s.icon size={17} strokeWidth={screen === s.id ? 2.2 : 1.8} aria-hidden />
                   <span className="max-[720px]:sr-only">{s.label}</span>
                   {s.id === "dashboard" && (
                     <span className="ml-auto max-[720px]:hidden">
@@ -92,8 +91,9 @@ function Shell() {
           </ul>
         </nav>
         <main className="min-w-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-5xl px-6 py-6 max-[720px]:px-4">
+          <div className="mx-auto max-w-[920px] px-8 pt-8 pb-12 max-[720px]:px-4 max-[720px]:pt-5">
             {screen === "dashboard" && <Dashboard goTo={setScreen} />}
+            {screen === "locations" && <Locations />}
             {screen === "profiles" && <Profiles />}
             {screen === "activity" && <ActivityScreen />}
             {screen === "settings" && <SettingsScreen />}
@@ -117,7 +117,7 @@ function Notices() {
         <div
           key={n.id}
           role={n.tone === "error" ? "alert" : "status"}
-          className={`pointer-events-auto flex items-start gap-3 rounded-md border px-3 py-2 text-[13px] shadow-lg ${
+          className={`pointer-events-auto flex items-start gap-3 rounded-xl border px-3.5 py-2.5 text-[13px] shadow-[0_12px_32px_-12px_rgb(10_16_22/0.35)] ${
             n.tone === "error" ? "border-danger/50 bg-danger-soft text-fg" : "border-line bg-surface text-fg"
           }`}
         >
@@ -149,9 +149,16 @@ function Notices() {
   );
 }
 
-function Shield() {
+/** Brand mark doubles as status: the check appears only once the server has answered. */
+function Shield({ confirmed }: { confirmed: boolean }) {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden className="text-accent">
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      aria-hidden
+      className={`shrink-0 transition-colors ${confirmed ? "text-ok" : "text-fg"}`}
+    >
       <path
         d="M12 2.5 4 5.5v6.2c0 4.9 3.4 8.6 8 9.8 4.6-1.2 8-4.9 8-9.8V5.5l-8-3Z"
         fill="none"
@@ -159,13 +166,15 @@ function Shield() {
         strokeWidth="1.8"
         strokeLinejoin="round"
       />
-      <path
-        d="M8.5 12.2 11 14.6l4.6-5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
+      {confirmed && (
+        <path
+          d="M8.5 12.2 11 14.6l4.6-5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+        />
+      )}
     </svg>
   );
 }

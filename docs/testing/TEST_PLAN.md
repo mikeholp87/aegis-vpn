@@ -47,3 +47,33 @@ full-tunnel, split, DNS/IPv6, kill switch, uninstall, reinstall.
 
 Release criteria: all automated checks green, live Linux test green, matrix
 rows run with results recorded, no open critical security issues.
+
+## Locations regression and acceptance
+
+Core tests cover additive migration without credential copies, ISO validation,
+server CRUD/reference checks, duplicate names/endpoints, favorite persistence,
+peer-evidence-only recent success, destination preflight, failed switching,
+concurrent connect/Quick Connect rejection, cancellation during preflight and
+activation, disabled/pending registration, Quick Connect preferences/country/
+cooldown, and expired/future health samples. Frontend tests cover directory
+navigation/search/filtering/grouping/sorting, empty/error/loading states,
+import assignment, favorites, delete confirmation, cancellation and active
+Dashboard synchronization. Test fixtures use simulated metadata/documentation
+endpoints; they are never shipped as configured production servers.
+
+The VM suite now switches between two country-labelled profiles of one
+controlled peer, confirms responses and sentinel traffic, switches back and
+deletes the destination. It preserves the existing full/full4 route/DNS/IPv6/
+reconnect/NM-restart/restoration checks. These labels do not prove geographic
+location or independent remote-server deployment. Run on a KVM-capable Linux
+host via `scripts/vm/run-vm-tests.sh`, or dispatch the separate
+`.github/workflows/vpn-integration.yml` workflow. Record all failures, including
+known NM restart/firewall behavior, without broad expected-failure exemptions.
+
+Remaining live acceptance: two independently operated country servers, invalid
+remote credentials/no handshake, failure during switching/authorization/DNS/
+firewall cleanup, suspend/resume, uplink changes, crash/restart and reboot.
+Windows CI compilation/portable tests do not substitute for an implemented
+Windows service, authenticated IPC/DPAPI tests and a Windows 11 real tunnel.
+No protected-switch success can be accepted until a continuous kill switch is
+implemented. Update TEST_RESULTS with environment and actual evidence.

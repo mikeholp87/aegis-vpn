@@ -2,6 +2,151 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-16 — Final audit-only security validation
+
+Scope: the user chose to keep the audit fixes and leave IPv6 blocking to the
+other session. Validation used a frozen `/tmp/aegis-audit-validation` copy of
+the audit fixes against `b93f017`, excluding concurrent IPv6 blocking, runtime
+verification, server registry and UI redesign changes. Results below apply
+to that snapshot, not the combined working tree. Earlier entries remain as
+the record of their respective runs.
+
+- `cargo test --workspace --all-targets --locked`: **67 passed**.
+- `cargo test -p aegis-desktop --test glib_security --release --locked`:
+  **2 passed**, including the Git source pin and optimized iterator regression.
+- Frontend Vitest: **10 passed**. TypeScript, Biome, workspace/all-target Clippy
+  with warnings denied and Rust formatting passed. Biome retains its existing
+  configuration deprecation notice.
+- Shellcheck, shfmt and the unprivileged peer-cleanup stub test passed.
+- Disposable Debian 13 VM, kernel 6.12.116+deb13-cloud-amd64, NetworkManager
+  1.52.1, systemd 257: **91 PASS, 0 FAIL**, both `full` and `full4` reported
+  `ALL PASSED`, runner exited 0. DNS positive controls, zero uplink DNS packets,
+  reconnect, three NetworkManager restarts per mode and exact route/rule/DNS/
+  nftables cleanup passed. The guest and temporary runner files were removed.
+  The audit-only IPv4 mode still reports IPv6 protection as failed; it does
+  not install the other session's blocking route.
+- Cargo audit using the refreshed local database, `--no-fetch --no-yanked`:
+  zero classified vulnerabilities, four unmaintained-package warnings. The
+  narrow GLib exception remains conditional on the pinned fixed source.
+- `/tmp/aegis-audit-validation/audit-fixes.patch`: applies to `b93f017` and
+  reproduces all 27 tested patch files byte-for-byte; recorded source hashes
+  match. This is a local review artifact, not a commit.
+
+An intermediate VM run failed after strict D-Bus error propagation exposed
+stale ActiveConnection paths following a NetworkManager restart (eight failed
+checks across the two modes). The final implementation checks a fresh
+ObjectManager snapshot for object absence; the rerun above passed all cycles.
+Concurrent incomplete registry changes also prevented a mixed-workspace
+build/typecheck, which is why final evidence was isolated rather than attributed
+to that integration.
+
+Not checked: combined-session integration, Windows runtime/ACL behavior, live
+webview penetration, yanked crates or Gitleaks. Jev Review remained unavailable
+(`JEV_API_KEY` unset). GLib uses an unmerged compatible backport; library-owned
+D-Bus serialization buffers cannot be guaranteed wiped. See
+[GLIB_BACKPORT.md](../security/GLIB_BACKPORT.md).
+
+## 2026-11-16 — Dashboard last response + public IP
+
+- `cargo test -p aegis-core -p aegis-linux --lib --tests`: 62 passed.
+- `cargo clippy -p aegis-core -p aegis-linux -p aegis-desktop --all-targets -- -D warnings`: pass.
+- Frontend Vitest: 24 passed (connected handshake + public IP display).
+- Not re-run: VM harness, full workspace.
+
+## 2026-11-16 — DNS/IPv6 protection (block + runtime verify) and internet reachability
+
+Host: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`
+pass; `cargo test --workspace` pass (aegis-core 42, aegis-linux 18 incl. new
+verify/settings tests); frontend biome, tsc, `vitest run` 23 passed.
+
+VM (`scripts/vm/run-vm-tests.sh`, Debian 13, NM 1.52.1, systemd 257), 120 PASS / 1 FAIL:
+- full and full4: DNS protection `Verified` at runtime (systemd-resolved `~.`
+  only on tunnel, server routed via tunnel); 0 DNS packets on uplink.
+- full: IPv6 `Verified` (routed through tunnel). full4: IPv6 now blocked
+  (`ip -6 route get` → No route to host, ping6 fails), reported `Verified`;
+  a pre-blocking NM install (ipv6 disabled) is refreshed on connect.
+- Reachability: `Verified` with tunnel DNS answering; `Failed` ("no answer …
+  within 3 seconds") after stopping the tunnel's dnsmasq. Both modes.
+- **FAIL (full4):** after the "NetworkManager restart while connected" cycle,
+  disconnect leaves `unreachable default dev lo proto static metric 1`
+  behind, so IPv6 stays blocked after disconnecting (fail-closed, not a
+  leak). NM loses ownership of the route across its restart. Not fixed yet.
+- Earlier baseline run (before these changes) also had a separate failure:
+  disconnect after NM restart hit a vanished ActiveConnection object
+  ("No such interface … ActiveConnection/2"); it did not recur in this run.
+
+## 2026-11-16 — Security review follow-up (honesty gaps)
+
+- `cargo test -p aegis-core -p aegis-linux --lib --tests`: 43 passed (includes
+  new cases: recovered kill-switch session must not reactivate after drop;
+  activation failure with failed cleanup stays Uncertain and retryable;
+  absent D-Bus name detection).
+- `cargo clippy -p aegis-core -p aegis-linux --all-targets -- -D warnings`:
+  pass.
+- Not re-run this turn: full workspace suite, VM harness, frontend Vitest,
+  GLib optimized test, shellcheck.
+
+## 2026-11-16 — Security fixes
+
+- `cargo test --workspace --all-targets --locked`: 61 tests passed, including
+  configuration validation, protection reporting, failed disconnect/switch,
+  session protection policy, recovery, status reconciliation, nonregular
+  imports, VM snapshot/capture checks and GLib source-pin/iterator checks.
+- `cargo test -p aegis-desktop --test glib_security --release --locked`:
+  2 passed with the pinned compatible backport in an optimized build.
+- Frontend Vitest: 11 passed, including unknown-status Disconnect availability.
+- Workspace/all-target Clippy, TypeScript and frontend lint: pass. Biome emits
+  the existing configuration deprecation notice.
+- Shellcheck and shfmt on the peer script, its cleanup test and VM runner: pass.
+  `bash scripts/test-netns-peer.test.sh`: pass; writable PID file ignored in
+  favor of stubbed kernel namespace PIDs. No host networking changes.
+- `scripts/vm/run-vm-tests.sh`: **91 PASS, 0 FAIL**, `ALL PASSED` for `full`
+  and `full4`, exit 0. Guest: Debian 13, kernel
+  6.12.116+deb13-cloud-amd64, NetworkManager 1.52.1, systemd 257. Both modes:
+  tunnel DNS answers, 0 uplink DNS packets with 4-packet positive controls,
+  reconnect and three NM restart cycles passed; routes/rules/DNS/nftables
+  restored exactly. No broad XFAIL acceptance of firewall leftovers remains.
+  The runner powered off the guest and removed its temporary files.
+- Cargo audit, local refreshed database and `--no-fetch --no-yanked`:
+  0 classified vulnerabilities; 4 unmaintained warnings. Narrow GLib exception
+  is guarded by its source pin and optimized test, not scanner silence alone.
+  See [GLIB_BACKPORT.md](../security/GLIB_BACKPORT.md). Yanked crates unchecked.
+
+New config/engine regressions failed before fixes. During validation the GLib
+source-pin test caught mixed Git/registry sys packages; the lockfile was unified
+before retaining the patch, and the desktop/optimized checks then passed.
+No Windows runtime/ACL test, webview penetration test or Gitleaks scan.
+Jev Review was unavailable (`JEV_API_KEY` not configured). D-Bus library buffers
+cannot be guaranteed wiped by application-owned key types.
+
+## 2026-11-16 — UI redesign (tunnel path dashboard, ink/status palette, bundled Atkinson fonts)
+
+| Check | Command | Result |
+|---|---|---|
+| Lint | `biome check src` | pass |
+| Types | `tsc --noEmit` | pass |
+| Frontend tests | `vitest run` | 10 passed (new: tunnel path never lights internet reachability) |
+| Build | `vite build` | pass, 267 KB JS (83 KB gzip), fonts bundled locally (CSP `font-src 'self'`) |
+
+Not run: visual review of the running app (no screenshots by policy); `tauri dev`.
+
+## 2026-11-16 — Security source review at b93f017
+
+- `cargo test --workspace`: 51 passed.
+- `node node_modules/vitest/vitest.mjs run` in `apps/desktop`: 9 passed.
+- Isolated `/tmp/aegis-security-probe` Cargo project: 8 probes passed, confirming
+  defective behavior in configuration mapping, requested protection, stale
+  status and deactivation handling. These are reproductions, not security fixes.
+- Fresh `cargo audit -d /tmp/aegis-security-advisory-db --json --no-yanked`:
+  0 classified vulnerabilities; 1 unsoundness warning (GLib 0.18.5) and
+  4 unmaintained-package warnings. Yanked releases were not checked.
+- `sh /home/mikeh/.npm-global/bin/pnpm audit --json` in `apps/desktop`:
+  0 advisories, including development dependencies.
+
+Report and suggested fixes: [security_best_practices_report.md](../../security_best_practices_report.md).
+No disruptive VM/host-network test, privileged exploit test, Windows runtime
+check or Gitleaks scan was run during this audit. No application fixes applied.
+
 ## 2026-11-16 — VM suite (`scripts/vm/run-vm-tests.sh`): full tunnel, leaks, recovery
 
 Host: QEMU 11.1.2 + KVM, user-mode networking, unprivileged. Guest: Debian 13

@@ -29,6 +29,41 @@ export interface ProfileView {
   summary: ProfileSummary;
   preferred: boolean;
   active: boolean;
+  server: ServerMetadata;
+}
+
+export interface Country {
+  code: string;
+  name: string;
+}
+export interface VpnLocation {
+  country_code: string;
+  city: string | null;
+  region: string | null;
+  time_zone: string | null;
+}
+export interface ServerUpdate {
+  location: VpnLocation | null;
+  favorite: boolean;
+  enabled: boolean;
+  registration_pending: boolean;
+}
+export interface ServerMetadata extends ServerUpdate {
+  last_connected_ms: number | null;
+  last_attempt_ms: number | null;
+  last_failure_ms: number | null;
+  last_response_ms: number | null;
+}
+export interface ServerHealth {
+  id: ProfileId;
+  reachability: "unknown" | "responded" | "no_response";
+  observed_ms: number | null;
+  measured_rtt_ms: number | null;
+  last_handshake_ms: number | null;
+}
+export interface QuickConnectChoice {
+  id: ProfileId;
+  reason: string;
 }
 
 export interface Capabilities {
@@ -50,6 +85,7 @@ export type ConnectionState =
   | { state: "connected"; profile: ProfileId; since_ms: number; peer: PeerState }
   | { state: "reconnecting"; profile: ProfileId; attempt: number; next_retry_ms: number }
   | { state: "disconnecting"; profile: ProfileId }
+  | { state: "uncertain"; profile: ProfileId | null; reason: string }
   | { state: "failed"; profile: ProfileId | null; reason: string };
 
 export type Feature =
@@ -76,8 +112,13 @@ export interface Stats {
 }
 
 export interface Snapshot {
+  health: ServerHealth[];
   state: ConnectionState;
   protection: Protection;
+  /** Whether the tunnel's DNS server answered a lookup. "off" = not tested. */
+  reachability: Feature;
+  /** Egress IPv4 from tunnel DNS whoami. Verified detail is the address. */
+  public_ip: Feature;
   stats: Stats | null;
   profile: ProfileView | null;
   simulated: boolean;
@@ -95,10 +136,13 @@ export interface Settings {
   launch_on_login: boolean;
   connect_on_launch: boolean;
   preferred_profile: ProfileId | null;
+  favorite_countries: string[];
+  quick_connect_country: string | null;
   auto_reconnect: boolean;
   reconnect_max_attempts: number;
   kill_switch: boolean;
   notifications: boolean;
+  connectivity_check: boolean;
   check_updates: boolean;
 }
 

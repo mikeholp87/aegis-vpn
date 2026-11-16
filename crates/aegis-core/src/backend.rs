@@ -3,7 +3,9 @@ use std::future::Future;
 use aegis_config::WgConfig;
 
 use crate::error::Result;
-use crate::types::{Capabilities, ProfileId, ProfileSummary, Protection, Settings, TunnelStatus};
+use crate::types::{
+    Capabilities, Feature, ProfileId, ProfileSummary, Protection, Settings, TunnelStatus,
+};
 
 /// A platform networking backend.
 ///
@@ -44,4 +46,40 @@ pub trait VpnBackend: Send + Sync + 'static {
     /// Protection actually in effect for an active tunnel. Must never report
     /// more than is really established.
     fn protection(&self, profile: &ProfileSummary, settings: &Settings) -> Protection;
+
+    /// Active check of the running tunnel (route lookups, resolver state).
+    /// The engine calls it on every status poll while connected and shows
+    /// its result instead of [`Self::protection`]. Default: no active check.
+    /// Light check that the server side can reach the internet, run when the
+    /// tunnel comes up and then once a minute. Default: not tested (`Off`).
+    fn check_reachability(
+        &self,
+        profile: &ProfileSummary,
+        status: &TunnelStatus,
+    ) -> impl Future<Output = Feature> + Send {
+        let _ = (profile, status);
+        async { Feature::Off }
+    }
+
+    /// Observe the tunnel's egress IPv4 via the profile DNS (whoami). Run once
+    /// when connected. Default: not tested (`Off`).
+    fn check_public_ip(
+        &self,
+        profile: &ProfileSummary,
+        status: &TunnelStatus,
+    ) -> impl Future<Output = Feature> + Send {
+        let _ = (profile, status);
+        async { Feature::Off }
+    }
+
+    fn verify_protection(
+        &self,
+        profile: &ProfileSummary,
+        settings: &Settings,
+        status: &TunnelStatus,
+    ) -> impl Future<Output = Protection> + Send {
+        let _ = status;
+        let p = self.protection(profile, settings);
+        async move { p }
+    }
 }

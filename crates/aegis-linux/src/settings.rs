@@ -23,6 +23,9 @@ const SECRET_FLAG_NONE: u32 = 0;
 /// Negative priority: only this connection's DNS servers are used while it is
 /// active (prevents DNS queries leaking to other interfaces' resolvers).
 pub const EXCLUSIVE_DNS_PRIORITY: i32 = -50;
+/// Metric of the unreachable `::/0` route that blocks IPv6 on IPv4-only full
+/// tunnels. Lower than any uplink default route (NM uses 100+), so it wins.
+pub const IPV6_BLOCK_METRIC: u32 = 1;
 
 pub fn iface_name(id: ProfileId) -> String {
     format!("{IFACE_PREFIX}{}", &id.0.simple().to_string()[..8])
@@ -47,7 +50,24 @@ fn address_data(nets: &[&IpNet]) -> Vec<HashMap<String, OwnedVariant>> {
         .collect()
 }
 
+/// `unreachable ::/0` with a metric below any uplink default route.
+fn ipv6_block_route() -> OwnedVariant {
+    ov(vec![HashMap::from([
+        ("dest".to_owned(), ov("::")),
+        ("prefix".to_owned(), ov(0u32)),
+        ("metric".to_owned(), ov(IPV6_BLOCK_METRIC)),
+        ("type".to_owned(), ov("unreachable")),
+    ])])
+}
+
+/// Profile name stored in `connection.id` ("Aegis: <name>").
+pub fn profile_name(s: &Settings) -> String {
+    let id = get_str(s, "connection", "id").unwrap_or_default();
+    id.strip_prefix("Aegis: ").unwrap_or(&id).to_owned()
+}
+
 /// Build NetworkManager settings, including secrets, for a profile.
+// shortcut: zbus serialization buffers cannot be wiped here; revisit when it supports secret-aware storage.
 pub fn to_settings(id: ProfileId, name: &str, user: &str, cfg: &WgConfig) -> Settings {
     let i = &cfg.interface;
     let route = cfg.route_kind();
@@ -166,7 +186,31 @@ pub fn to_settings(id: ProfileId, name: &str, user: &str, cfg: &WgConfig) -> Set
         s
     };
     let ipv4 = ip_section(&v4, full_v4, !dns4.is_empty(), ov(dns4.clone()));
-    let ipv6 = ip_section(&v6, full_v6, !dns6.is_empty(), ov(dns6));
+    // IPv6 is blocked whenever IPv4 is a full tunnel and IPv6 is not carried.
+    let block_v6 = full_v4 && (!full_v6 || v6.is_empty());
+    let ipv6 = if !block_v6 {
+        ip_section(&v6, full_v6, !dns6.is_empty(), ov(dns6))
+    } else {
+        // IPv4 full tunnel that does not carry IPv6: block IPv6 with an
+        // unreachable default route instead of letting it leave through the
+        // local network. NM removes the route on disconnect. Verified on
+        // NM 1.52: `manual` with no address accepts a routes-only section.
+        // IPv6 DNS servers are kept so export stays faithful; queries to them
+        // cannot leave while the block is in place.
+        let has_dns = !dns6.is_empty();
+        let mut s = if v6.is_empty() {
+            let mut s = section(vec![("method", ov("manual"))]);
+            if has_dns {
+                s.insert("dns".into(), ov(dns6));
+                s.insert("ignore-auto-dns".into(), ov(true));
+            }
+            s
+        } else {
+            ip_section(&v6, false, has_dns, ov(dns6))
+        };
+        s.insert("route-data".into(), ipv6_block_route());
+        s
+    };
 
     HashMap::from([
         ("connection".to_owned(), conn),
@@ -205,7 +249,7 @@ fn maps(v: &OwnedVariant) -> Option<Vec<HashMap<String, OwnedVariant>>> {
 
 /// Rebuild a [`WgConfig`] from NM settings merged with secrets.
 pub fn from_settings(s: &Settings) -> Result<WgConfig> {
-    let private_key = get_str(s, "wireguard", "private-key")
+    let private_key = get(s, "wireguard", "private-key").and_then(|v| <&str>::try_from(v).ok())
         .ok_or_else(|| {
             CoreError::backend("the private key is missing from NetworkManager (secret not readable); re-import the profile")
         })?
@@ -271,7 +315,10 @@ pub fn from_settings(s: &Settings) -> Result<WgConfig> {
             Some(e) => Some(e.parse::<Endpoint>().map_err(|_| bad("endpoint"))?),
             None => None,
         };
-        let preshared_key = match str_of(&m, "preshared-key") {
+        let preshared_key = match m
+            .get("preshared-key")
+            .and_then(|v| <&str>::try_from(v).ok())
+        {
             Some(k) if !k.is_empty() => Some(k.parse().map_err(|_| bad("preshared-key"))?),
             _ => None,
         };
@@ -335,6 +382,34 @@ pub fn merge_secrets(settings: &mut Settings, secrets: Settings) {
         })
         .collect();
     wg.insert("peers".into(), ov(merged));
+}
+
+/// True for connections installed before IPv6 blocking existed: an IPv4 full
+/// tunnel whose IPv6 is simply disabled (so it leaks). Re-installing fixes it.
+pub fn lacks_ipv6_block(s: &Settings) -> bool {
+    let routes = |net: &str| {
+        get(s, "wireguard", "peers")
+            .and_then(maps)
+            .unwrap_or_default()
+            .iter()
+            .any(|p| {
+                p.get("allowed-ips")
+                    .and_then(|v| Vec::<String>::try_from(v.try_clone().ok()?).ok())
+                    .is_some_and(|a| a.iter().any(|x| x == net))
+            })
+    };
+    let has_v6_addr = get(s, "ipv6", "address-data")
+        .and_then(maps)
+        .is_some_and(|a| !a.is_empty());
+    let blocked = get(s, "ipv6", "route-data")
+        .and_then(maps)
+        .is_some_and(|r| {
+            r.iter().any(|m| {
+                str_of(m, "type").as_deref() == Some("unreachable")
+                    && u32_of(m, "prefix") == Some(0)
+            })
+        });
+    routes("0.0.0.0/0") && !(routes("::/0") && has_v6_addr) && !blocked
 }
 
 /// Our profile id if these settings describe a tunnel this app manages.
@@ -429,6 +504,35 @@ mod tests {
                 .unwrap();
         assert_eq!(search, vec!["corp.example"]);
         assert_eq!(get_str(&s, "ipv6", "method").unwrap(), "disabled");
+    }
+
+    #[test]
+    fn ipv4_only_full_tunnel_blocks_ipv6() {
+        let mut cfg = aegis_config::parse(FULL).unwrap();
+        cfg.peers[0].allowed_ips.retain(|a| a.addr().is_ipv4());
+        for keep_v6_addr in [true, false] {
+            if !keep_v6_addr {
+                cfg.interface.addresses.retain(|a| a.addr().is_ipv4());
+            }
+            let s = to_settings(id(), "Work", "alice", &cfg);
+            let routes = get(&s, "ipv6", "route-data").and_then(maps).unwrap();
+            assert_eq!(str_of(&routes[0], "type").as_deref(), Some("unreachable"));
+            assert_eq!(str_of(&routes[0], "dest").as_deref(), Some("::"));
+            assert_eq!(u32_of(&routes[0], "prefix"), Some(0));
+            assert_eq!(get_str(&s, "ipv6", "method").unwrap(), "manual");
+            assert!(!lacks_ipv6_block(&s));
+            // The block is ours, not the profile's: it never shows up on export.
+            assert_eq!(from_settings(&s).unwrap(), cfg);
+        }
+        // An install from before blocking existed is detected for refresh.
+        let mut old = to_settings(id(), "Work", "alice", &cfg);
+        old.insert("ipv6".into(), section(vec![("method", ov("disabled"))]));
+        assert!(lacks_ipv6_block(&old));
+        // Full dual-stack and split profiles are left alone.
+        let full = to_settings(id(), "Work", "alice", &aegis_config::parse(FULL).unwrap());
+        assert!(get(&full, "ipv6", "route-data").is_none() && !lacks_ipv6_block(&full));
+        let split = to_settings(id(), "Lab", "alice", &aegis_config::parse(SPLIT).unwrap());
+        assert!(!lacks_ipv6_block(&split));
     }
 
     #[test]

@@ -17,6 +17,7 @@ use zbus::{Connection, Proxy};
 use zbus::{OwnedObjectPath, OwnedVariant};
 
 use crate::settings::{self, Settings};
+use crate::verify::{self, Resolver};
 
 const NM: &str = "org.freedesktop.NetworkManager";
 const NM_PATH: &str = "/org/freedesktop/NetworkManager";
@@ -127,37 +128,32 @@ impl NmBackend {
         c.call("GetSettings", &()).await.map_err(map_err)
     }
 
-    /// Active connections that are ours: (active path, profile, state, device paths).
+    /// Read one authoritative property snapshot; absent objects are confirmed gone.
     async fn active(&self) -> Result<Vec<(OwnedObjectPath, ProfileId, u32, Vec<OwnedObjectPath>)>> {
         let nm = self.proxy(NM_PATH, NM).await?;
         let paths: Vec<OwnedObjectPath> = nm
             .get_property("ActiveConnections")
             .await
             .map_err(map_err)?;
+        let manager = self
+            .proxy("/org/freedesktop", "org.freedesktop.DBus.ObjectManager")
+            .await?;
+        let objects: HashMap<OwnedObjectPath, Settings> = manager
+            .call("GetManagedObjects", &())
+            .await
+            .map_err(map_err)?;
         let mut out = Vec::new();
         for p in paths {
-            let Ok(a) = self.proxy(p.as_str(), IF_ACTIVE).await else {
+            let Some(properties) = objects.get(&p).and_then(|o| o.get(IF_ACTIVE)) else {
                 continue;
             };
-            // Objects can vanish between listing and reading; skip those.
-            let Ok(kind) = a.get_property::<String>("Type").await else {
+            let Some((conn_path, state, devices)) = parse_active(properties)? else {
                 continue;
             };
-            if kind != "wireguard" {
-                continue;
+            let settings = self.get_settings(conn_path.as_str()).await?;
+            if let Some(id) = settings::owned_profile(&settings) {
+                out.push((p, id, state, devices));
             }
-            let Ok(conn_path) = a.get_property::<OwnedObjectPath>("Connection").await else {
-                continue;
-            };
-            let Ok(s) = self.get_settings(conn_path.as_str()).await else {
-                continue;
-            };
-            let Some(id) = settings::owned_profile(&s) else {
-                continue;
-            };
-            let state: u32 = a.get_property("State").await.unwrap_or(0);
-            let devices: Vec<OwnedObjectPath> = a.get_property("Devices").await.unwrap_or_default();
-            out.push((p, id, state, devices));
         }
         Ok(out)
     }
@@ -275,7 +271,15 @@ impl VpnBackend for NmBackend {
     }
 
     async fn activate(&self, id: ProfileId) -> Result<()> {
-        let path = self.find_connection(id).await?.ok_or(CoreError::NotFound)?;
+        let mut path = self.find_connection(id).await?.ok_or(CoreError::NotFound)?;
+        let current = self.get_settings(path.as_str()).await?;
+        if settings::lacks_ipv6_block(&current) {
+            // Installed by an older version: re-install so IPv6 gets blocked.
+            let name = settings::profile_name(&current);
+            let cfg = self.load(id).await?;
+            self.install(id, &name, &cfg).await?;
+            path = self.find_connection(id).await?.ok_or(CoreError::NotFound)?;
+        }
         let nm = self.proxy(NM_PATH, NM).await?;
         let root = OwnedObjectPath::try_from("/").expect("static path");
         nm.call::<_, _, OwnedObjectPath>("ActivateConnection", &(path, root.clone(), root))
@@ -312,10 +316,13 @@ impl VpnBackend for NmBackend {
             return Ok(None);
         };
         let mut interface = None;
-        if let Some(dev) = devices.first()
-            && let Ok(d) = self.proxy(dev.as_str(), IF_DEVICE).await
-        {
-            interface = d.get_property::<String>("Interface").await.ok();
+        if let Some(dev) = devices.first() {
+            let d = self.proxy(dev.as_str(), IF_DEVICE).await?;
+            interface = Some(
+                d.get_property::<String>("Interface")
+                    .await
+                    .map_err(map_err)?,
+            );
         }
         let (rx_bytes, tx_bytes) = interface.as_deref().map(read_counters).unwrap_or((0, 0));
         let link = match state {
@@ -335,45 +342,203 @@ impl VpnBackend for NmBackend {
     }
 
     fn protection(&self, profile: &ProfileSummary, settings: &AppSettings) -> Protection {
-        let has_dns = !profile.dns.is_empty();
-        let kill_switch = if settings.kill_switch {
-            Feature::Unsupported("the firewall helper is not installed".into())
-        } else {
-            Feature::Off
+        profile_protection(profile, settings)
+    }
+
+    async fn check_reachability(
+        &self,
+        profile: &ProfileSummary,
+        _status: &TunnelStatus,
+    ) -> Feature {
+        let Some(server) = tunnel_dns(profile) else {
+            return Feature::Unsupported("the profile has no DNS server inside the tunnel".into());
         };
-        let (dns, ipv6) = match profile.route_kind {
-            RouteKind::Full => {
-                (
-                    if has_dns {
-                        Feature::Configured("NetworkManager sends all DNS to this tunnel's servers (priority -50, ~.)".into())
-                    } else {
-                        Feature::Failed(
-                            "the profile has no DNS servers, so lookups use your local network"
-                                .into(),
-                        )
-                    },
-                    Feature::Configured("IPv6 default route goes through the tunnel".into()),
-                )
-            }
-            RouteKind::FullIpv4Only => (
-                if has_dns {
-                    Feature::Configured(
-                        "NetworkManager sends all DNS to this tunnel's servers".into(),
+        let rcode = tokio::task::spawn_blocking(move || verify::lookup(server))
+            .await
+            .unwrap_or(None);
+        verify::judge_reachability(rcode)
+    }
+
+    async fn check_public_ip(&self, profile: &ProfileSummary, _status: &TunnelStatus) -> Feature {
+        let Some(server) = tunnel_dns(profile) else {
+            return Feature::Unsupported("the profile has no DNS server inside the tunnel".into());
+        };
+        let addrs = tokio::task::spawn_blocking(move || verify::lookup_public_ip(server))
+            .await
+            .unwrap_or(None);
+        verify::judge_public_ip(addrs)
+    }
+
+    async fn verify_protection(
+        &self,
+        profile: &ProfileSummary,
+        settings: &AppSettings,
+        status: &TunnelStatus,
+    ) -> Protection {
+        let mut p = profile_protection(profile, settings);
+        let addrs: Vec<std::net::IpAddr> = profile
+            .addresses
+            .iter()
+            .filter_map(|a| a.parse::<ipnet::IpNet>().ok())
+            .map(|a| a.addr())
+            .collect();
+        // Only upgrade what is configured; Off/Failed from the profile itself stay.
+        if matches!(p.ipv6, Feature::Configured(_)) {
+            p.ipv6 =
+                verify::judge_ipv6(profile.route_kind, verify::probe(verify::PUBLIC_V6, &addrs));
+        }
+        if matches!(p.dns, Feature::Configured(_)) {
+            let servers: Vec<_> = profile
+                .dns
+                .iter()
+                .filter_map(|d| d.parse::<std::net::IpAddr>().ok())
+                .map(|d| (d, verify::probe(d, &addrs)))
+                .collect();
+            let ifindex = status.interface.as_deref().and_then(|i| {
+                std::fs::read_to_string(format!("/sys/class/net/{i}/ifindex"))
+                    .ok()?
+                    .trim()
+                    .parse()
+                    .ok()
+            });
+            p.dns = verify::judge_dns(&servers, &self.resolver().await, ifindex);
+        }
+        p
+    }
+}
+
+impl NmBackend {
+    /// Read the resolver configuration (no privileges needed).
+    async fn resolver(&self) -> Resolver {
+        let text = match std::fs::read_to_string("/etc/resolv.conf") {
+            Ok(t) => t,
+            Err(e) => return Resolver::Unknown(format!("cannot read /etc/resolv.conf: {e}")),
+        };
+        if let Some(ns) = verify::parse_resolv_conf(&text) {
+            return Resolver::Plain(ns);
+        }
+        let domains = async {
+            Proxy::new(
+                &self.conn,
+                "org.freedesktop.resolve1",
+                "/org/freedesktop/resolve1",
+                "org.freedesktop.resolve1.Manager",
+            )
+            .await?
+            .get_property::<Vec<(i32, String, bool)>>("Domains")
+            .await
+        };
+        match tokio::time::timeout(Duration::from_secs(2), domains).await {
+            Ok(Ok(d)) => Resolver::Resolved(d),
+            Ok(Err(e)) => Resolver::Unknown(format!("systemd-resolved did not answer: {e}")),
+            Err(_) => Resolver::Unknown("systemd-resolved did not answer in time".into()),
+        }
+    }
+}
+
+/// IPv4-only full tunnels get an unreachable `::/0` route (see `settings::to_settings`).
+const BLOCKED_V6: &str = "the profile has no IPv6, so IPv6 is blocked by an unreachable route while connected; not yet verified";
+
+fn parse_active(
+    p: &settings::Section,
+) -> Result<Option<(OwnedObjectPath, u32, Vec<OwnedObjectPath>)>> {
+    let invalid =
+        || CoreError::backend("NetworkManager returned incomplete active-connection properties");
+    let field = |key: &str| p.get(key).ok_or_else(invalid);
+    let kind = <&str>::try_from(field("Type")?).map_err(|_| invalid())?;
+    if kind != "wireguard" {
+        return Ok(None);
+    }
+    let path = OwnedObjectPath::try_from(field("Connection")?.try_clone().map_err(|_| invalid())?)
+        .map_err(|_| invalid())?;
+    let state = u32::try_from(field("State")?).map_err(|_| invalid())?;
+    let devices =
+        Vec::<OwnedObjectPath>::try_from(field("Devices")?.try_clone().map_err(|_| invalid())?)
+            .map_err(|_| invalid())?;
+    Ok(Some((path, state, devices)))
+}
+
+/// DNS server that the kernel would reach through this tunnel's addresses.
+fn tunnel_dns(profile: &ProfileSummary) -> Option<std::net::IpAddr> {
+    let addrs: Vec<std::net::IpAddr> = profile
+        .addresses
+        .iter()
+        .filter_map(|a| a.parse::<ipnet::IpNet>().ok())
+        .map(|a| a.addr())
+        .collect();
+    profile
+        .dns
+        .iter()
+        .filter_map(|d| d.parse::<std::net::IpAddr>().ok())
+        .find(|d| verify::probe(*d, &addrs) == verify::RouteProbe::Tunnel)
+}
+
+fn profile_protection(profile: &ProfileSummary, settings: &AppSettings) -> Protection {
+    let has_family = |v6| {
+        profile
+            .addresses
+            .iter()
+            .filter_map(|a| a.parse::<ipnet::IpNet>().ok())
+            .any(|a| a.addr().is_ipv6() == v6)
+    };
+    let has_dns = profile
+        .dns
+        .iter()
+        .filter_map(|d| d.parse::<std::net::IpAddr>().ok())
+        .any(|d| {
+            has_family(d.is_ipv6())
+                && if d.is_ipv6() {
+                    matches!(
+                        profile.route_kind,
+                        RouteKind::Full | RouteKind::FullIpv6Only
                     )
                 } else {
-                    Feature::Failed("the profile has no DNS servers".into())
-                },
+                    matches!(
+                        profile.route_kind,
+                        RouteKind::Full | RouteKind::FullIpv4Only
+                    )
+                }
+        });
+    let kill_switch = if settings.kill_switch {
+        Feature::Unsupported("the firewall helper is not installed".into())
+    } else {
+        Feature::Off
+    };
+    let (dns, ipv6) = match profile.route_kind {
+        RouteKind::Full => (
+            if has_dns {
+                Feature::Configured(
+                    "Tunnel DNS configured with priority -50 and ~.; resolver selection not independently verified"
+                        .into(),
+                )
+            } else {
                 Feature::Failed(
-                    "the profile does not route IPv6; IPv6 traffic bypasses the tunnel".into(),
-                ),
-            ),
-            RouteKind::FullIpv6Only | RouteKind::Split => (Feature::Off, Feature::Off),
-        };
-        Protection {
-            kill_switch,
-            dns,
-            ipv6,
-        }
+                    "the profile has no DNS servers, so lookups use your local network".into(),
+                )
+            },
+            if has_family(true) {
+                Feature::Configured(
+                    "IPv6 default route configured on the tunnel; not independently verified"
+                        .into(),
+                )
+            } else {
+                Feature::Configured(BLOCKED_V6.into())
+            },
+        ),
+        RouteKind::FullIpv4Only => (
+            if has_dns {
+                Feature::Configured("IPv4 tunnel DNS configured with priority -50 and ~.; resolver selection not independently verified".into())
+            } else {
+                Feature::Failed("the profile has no DNS servers".into())
+            },
+            Feature::Configured(BLOCKED_V6.into()),
+        ),
+        RouteKind::FullIpv6Only | RouteKind::Split => (Feature::Off, Feature::Off),
+    };
+    Protection {
+        kill_switch,
+        dns,
+        ipv6,
     }
 }
 
@@ -386,5 +551,59 @@ mod tests {
         assert_eq!(parse_version("1.58.1"), Some((1, 58)));
         assert!(parse_version("1.14.0").unwrap() < MIN_VERSION);
         assert_eq!(parse_version("garbage"), None);
+    }
+
+    #[test]
+    fn incomplete_active_properties_are_errors_not_absence() {
+        let mut p = settings::Section::new();
+        p.insert(
+            "Type".into(),
+            OwnedVariant::try_from(zbus::Variant::from("wireguard")).unwrap(),
+        );
+        assert!(parse_active(&p).is_err());
+        p.insert(
+            "Type".into(),
+            OwnedVariant::try_from(zbus::Variant::from("ethernet")).unwrap(),
+        );
+        assert!(parse_active(&p).unwrap().is_none());
+        p.insert("Type".into(), OwnedVariant::from(17_u32));
+        assert!(parse_active(&p).is_err());
+    }
+
+    #[test]
+    fn protection_requires_enabled_address_family_and_dns_servers() {
+        let mut cfg = aegis_config::parse(include_str!(
+            "../../../tests/fixtures/valid/full-tunnel.conf"
+        ))
+        .unwrap();
+        cfg.interface.addresses.retain(|a| a.addr().is_ipv4());
+        cfg.interface.dns = vec!["fd99::1".parse().unwrap()];
+        let p = profile_protection(&ProfileSummary::from_config(&cfg), &AppSettings::default());
+        assert!(
+            matches!(p.ipv6, Feature::Configured(ref d) if d == BLOCKED_V6),
+            "{p:?}"
+        );
+        assert!(matches!(p.dns, Feature::Failed(_)), "{p:?}");
+
+        cfg.interface.dns.clear();
+        cfg.interface.dns_search = vec!["corp.example".into()];
+        let p = profile_protection(&ProfileSummary::from_config(&cfg), &AppSettings::default());
+        assert!(matches!(p.dns, Feature::Failed(_)), "{p:?}");
+
+        cfg.interface.dns = vec!["10.0.0.1".parse().unwrap()];
+        let p = profile_protection(&ProfileSummary::from_config(&cfg), &AppSettings::default());
+        assert!(matches!(p.dns, Feature::Configured(_)), "{p:?}");
+    }
+
+    #[test]
+    fn ipv6_dns_is_not_exclusive_when_only_ipv4_has_a_default_route() {
+        let mut cfg = aegis_config::parse(include_str!(
+            "../../../tests/fixtures/valid/full-tunnel.conf"
+        ))
+        .unwrap();
+        cfg.peers[0].allowed_ips.retain(|a| a.addr().is_ipv4());
+        cfg.interface.dns.retain(|d| d.is_ipv6());
+        let p = profile_protection(&ProfileSummary::from_config(&cfg), &AppSettings::default());
+        assert!(matches!(p.dns, Feature::Failed(_)), "{p:?}");
     }
 }

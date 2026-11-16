@@ -1,6 +1,16 @@
+import { listen } from "@tauri-apps/api/event";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { api, asUiError, onEngineEvent, onImportResult } from "./api";
-import type { AppInfo, Capabilities, LogEntry, ProfileView, Settings, Snapshot, UiError } from "./types";
+import type {
+  AppInfo,
+  Capabilities,
+  Country,
+  LogEntry,
+  ProfileView,
+  Settings,
+  Snapshot,
+  UiError,
+} from "./types";
 
 export interface Notice {
   id: number;
@@ -15,6 +25,7 @@ export interface AppStore {
   caps: Capabilities | null;
   snapshot: Snapshot | null;
   profiles: ProfileView[];
+  countries: Country[];
   settings: Settings | null;
   events: LogEntry[];
   notices: Notice[];
@@ -41,6 +52,7 @@ export function useAppStore(): AppStore {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [caps, setCaps] = useState<Capabilities | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [countries, setCountries] = useState<Country[]>([]);
   const [profiles, setProfiles] = useState<ProfileView[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [events, setEvents] = useState<LogEntry[]>([]);
@@ -81,32 +93,54 @@ export function useAppStore(): AppStore {
     let alive = true;
     const unlisten: Array<() => void> = [];
     (async () => {
-      const [i, c, s, p, st, ev] = await Promise.all([
+      let sawSnapshot = false;
+      let sawProfiles = false;
+      const listeners = await Promise.all([
+        listen<string>("settings-error", (e) => notify({ tone: "error", text: e.payload })),
+        onEngineEvent((e) => {
+          if (!alive) return;
+          if (e.type === "snapshot") {
+            sawSnapshot = true;
+            setSnapshot(e.data);
+          } else if (e.type === "log") setEvents((xs) => [...xs.slice(-(MAX_EVENTS - 1)), e.data]);
+          else if (e.type === "profiles_changed") {
+            sawProfiles = true;
+            void api
+              .profiles()
+              .then((p) => {
+                if (alive) setProfiles(p);
+              })
+              .catch((e) => notify({ tone: "error", text: asUiError(e).message }));
+          }
+        }),
+        onImportResult((r) => {
+          if (!alive) return;
+          if (r.error) notify({ tone: "error", text: `${r.name}: ${r.error.message}`, error: r.error });
+          else notify({ tone: "info", text: `Imported ${r.name}; assign a country in Locations` });
+        }),
+      ]);
+      if (!alive) {
+        for (const u of listeners) u();
+        return;
+      }
+      unlisten.push(...listeners);
+      const [i, c, s, p, st, ev, countries] = await Promise.all([
         api.appInfo(),
         api.capabilities(),
         api.snapshot(),
         api.profiles(),
         api.settings(),
         api.events(),
+        api.countries(),
       ]);
       if (!alive) return;
+      setCountries(countries);
       setInfo(i);
       setCaps(c);
-      setSnapshot(s);
-      setProfiles(p);
+      if (!sawSnapshot) setSnapshot(s);
+      if (!sawProfiles) setProfiles(p);
       setSettings(st);
-      setEvents(ev);
-      unlisten.push(
-        await onEngineEvent((e) => {
-          if (e.type === "snapshot") setSnapshot(e.data);
-          else if (e.type === "log") setEvents((xs) => [...xs.slice(-(MAX_EVENTS - 1)), e.data]);
-          else if (e.type === "profiles_changed") void api.profiles().then(setProfiles);
-        }),
-        await onImportResult((r) => {
-          if (r.error) notify({ tone: "error", text: `${r.name}: ${r.error.message}`, error: r.error });
-          else notify({ tone: "info", text: `Imported ${r.name}` });
-        }),
-      );
+      setEvents((xs) => [...ev, ...xs].slice(-MAX_EVENTS));
     })().catch((e) => notify({ tone: "error", text: asUiError(e).message }));
     return () => {
       alive = false;
@@ -128,6 +162,7 @@ export function useAppStore(): AppStore {
     caps,
     snapshot,
     profiles,
+    countries,
     settings,
     events,
     notices,

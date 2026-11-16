@@ -93,6 +93,9 @@ pub struct ProfileMeta {
     pub created_ms: u64,
     pub updated_ms: u64,
     pub summary: ProfileSummary,
+    /// Additive migration: older profiles remain usable with an unassigned location.
+    #[serde(default)]
+    pub server: crate::registry::ServerMetadata,
 }
 
 /// What the UI sees for a profile.
@@ -199,6 +202,11 @@ pub enum ConnectionState {
     Disconnecting {
         profile: ProfileId,
     },
+    /// A tunnel may still be active; changing/deleting it is unsafe until reconciled.
+    Uncertain {
+        profile: Option<ProfileId>,
+        reason: String,
+    },
     Failed {
         profile: Option<ProfileId>,
         reason: String,
@@ -210,7 +218,7 @@ impl ConnectionState {
         use ConnectionState::*;
         match self {
             Disconnected => None,
-            Failed { profile, .. } => *profile,
+            Failed { profile, .. } | Uncertain { profile, .. } => *profile,
             Preparing { profile }
             | Connecting { profile }
             | Connected { profile, .. }
@@ -270,8 +278,15 @@ pub struct Stats {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Snapshot {
+    pub health: Vec<crate::registry::ServerHealth>,
     pub state: ConnectionState,
     pub protection: Protection,
+    /// Whether the far end answered a lookup through the tunnel. `Off` means
+    /// not tested. Never inferred from the link or peer state.
+    pub reachability: Feature,
+    /// Egress IPv4 observed via the tunnel DNS whoami. `Off` = not tested;
+    /// `Verified` detail is the address itself.
+    pub public_ip: Feature,
     pub stats: Option<Stats>,
     pub profile: Option<ProfileView>,
     pub simulated: bool,
@@ -310,11 +325,15 @@ pub struct Settings {
     pub launch_on_login: bool,
     pub connect_on_launch: bool,
     pub preferred_profile: Option<ProfileId>,
+    pub favorite_countries: Vec<String>,
+    pub quick_connect_country: Option<String>,
     pub auto_reconnect: bool,
     pub reconnect_max_attempts: u32,
     /// Requested by the user. Connecting fails if it cannot be established.
     pub kill_switch: bool,
     pub notifications: bool,
+    /// Opt-in: DNS reachability lookup through the configured tunnel resolver.
+    pub connectivity_check: bool,
     pub check_updates: bool,
 }
 
@@ -326,10 +345,13 @@ impl Default for Settings {
             launch_on_login: false,
             connect_on_launch: false,
             preferred_profile: None,
+            favorite_countries: vec![],
+            quick_connect_country: None,
             auto_reconnect: true,
             reconnect_max_attempts: 8,
             kill_switch: false,
             notifications: true,
+            connectivity_check: true,
             check_updates: false,
         }
     }

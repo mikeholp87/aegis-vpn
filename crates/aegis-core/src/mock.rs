@@ -20,11 +20,14 @@ struct Inner {
     active: Option<(ProfileId, u64)>,
     fail_next_activate: Option<String>,
     drop_active: bool,
+    fail_deactivate: bool,
+    fail_status: bool,
 }
 
 pub struct MockBackend {
     inner: Mutex<Inner>,
     pub activate_delay: Duration,
+    pub load_delay: Duration,
 }
 
 impl Default for MockBackend {
@@ -32,6 +35,7 @@ impl Default for MockBackend {
         Self {
             inner: Mutex::default(),
             activate_delay: Duration::from_millis(700),
+            load_delay: Duration::ZERO,
         }
     }
 }
@@ -55,6 +59,12 @@ impl MockBackend {
         let mut g = self.lock();
         g.active = None;
         g.drop_active = true;
+    }
+    pub fn fail_deactivate(&self, fail: bool) {
+        self.lock().fail_deactivate = fail;
+    }
+    pub fn fail_status(&self, fail: bool) {
+        self.lock().fail_status = fail;
     }
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
@@ -94,6 +104,7 @@ impl VpnBackend for MockBackend {
     }
 
     async fn load(&self, id: ProfileId) -> Result<WgConfig> {
+        tokio::time::sleep(self.load_delay).await;
         self.lock()
             .profiles
             .get(&id)
@@ -121,6 +132,9 @@ impl VpnBackend for MockBackend {
 
     async fn deactivate(&self, id: ProfileId) -> Result<()> {
         let mut g = self.lock();
+        if g.fail_deactivate {
+            return Err(CoreError::backend("simulated deactivation failure"));
+        }
         if g.active.map(|a| a.0) == Some(id) {
             g.active = None;
         }
@@ -129,6 +143,9 @@ impl VpnBackend for MockBackend {
 
     async fn status(&self) -> Result<Option<TunnelStatus>> {
         let g = self.lock();
+        if g.fail_status {
+            return Err(CoreError::backend("simulated status failure"));
+        }
         Ok(g.active.map(|(id, since)| {
             // Deterministic synthetic counters so the UI has something to render.
             let secs = now_ms().saturating_sub(since) / 1000;
@@ -150,5 +167,17 @@ impl VpnBackend for MockBackend {
             dns: u(),
             ipv6: u(),
         }
+    }
+
+    async fn check_reachability(
+        &self,
+        _profile: &ProfileSummary,
+        _status: &TunnelStatus,
+    ) -> Feature {
+        Feature::Unsupported(SIM.into())
+    }
+
+    async fn check_public_ip(&self, _profile: &ProfileSummary, _status: &TunnelStatus) -> Feature {
+        Feature::Unsupported(SIM.into())
     }
 }

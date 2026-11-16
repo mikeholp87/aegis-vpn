@@ -7,6 +7,7 @@ yanked = "deny"
 # Unmaintained crates with no safe upgrade, all pulled in by Tauri dependencies
 # we cannot change. Revisit on every Tauri / plugin update.
 ignore = [
+  { id = "RUSTSEC-2024-0429", reason = "glib 0.18.5 uses the two-line VariantStrIter backport pinned at ea720152; reviewed 2026-11-16; revisit on every Tauri update" },
   # zbus 5 internals, merged into zbus 6 (we use zbus 6). Only
   # tauri-plugin-single-instance 2.5.5 still depends on zbus 5.
   { id = "RUSTSEC-2026-0370", reason = "zvariant 5 via tauri-plugin-single-instance; no zbus 6 release yet" },
@@ -32,3 +33,4 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-git = ["https://github.com/gtk-rs/gtk-rs-core"]

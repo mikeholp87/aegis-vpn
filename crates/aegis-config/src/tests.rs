@@ -1,4 +1,18 @@
 use super::*;
+
+#[test]
+fn default_routes_need_a_tunnel_address_of_the_same_family() {
+    let mut cfg = parse(include_str!(
+        "../../../tests/fixtures/valid/full-tunnel.conf"
+    ))
+    .unwrap();
+    cfg.interface.addresses.retain(|a| a.addr().is_ipv4());
+    assert!(
+        validate(&cfg)
+            .iter()
+            .any(|i| i.field.as_deref() == Some("Address"))
+    );
+}
 use proptest::prelude::*;
 
 const FULL: &str = include_str!("../../../tests/fixtures/valid/full-tunnel.conf");
@@ -161,9 +175,12 @@ fn rejects_own_and_duplicate_peer_keys() {
 #[test]
 fn route_kinds() {
     let kind = |allowed: &str| {
-        parse(&minimal("", &format!("AllowedIPs = {allowed}")))
-            .unwrap()
-            .route_kind()
+        parse(&minimal(
+            "Address = fd99::2/128",
+            &format!("AllowedIPs = {allowed}"),
+        ))
+        .unwrap()
+        .route_kind()
     };
     assert_eq!(kind("0.0.0.0/0"), RouteKind::FullIpv4Only);
     assert_eq!(kind("::/0"), RouteKind::FullIpv6Only);

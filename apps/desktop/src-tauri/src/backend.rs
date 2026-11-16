@@ -5,8 +5,8 @@
 use aegis_config::WgConfig;
 use aegis_core::mock::MockBackend;
 use aegis_core::{
-    BackendKind, Capabilities, CoreError, ProfileId, ProfileSummary, Protection, Result, Settings,
-    Support, TunnelStatus, VpnBackend,
+    BackendKind, Capabilities, CoreError, Feature, ProfileId, ProfileSummary, Protection, Result,
+    Settings, Support, TunnelStatus, VpnBackend,
 };
 
 pub enum AnyBackend {
@@ -113,6 +113,48 @@ impl VpnBackend for AnyBackend {
             #[cfg(windows)]
             AnyBackend::Win(b) => b.protection(profile, settings),
             AnyBackend::Unavailable(_) => Protection::off(),
+        }
+    }
+
+    async fn check_reachability(
+        &self,
+        profile: &ProfileSummary,
+        status: &TunnelStatus,
+    ) -> aegis_core::Feature {
+        match self {
+            AnyBackend::Mock(b) => b.check_reachability(profile, status).await,
+            #[cfg(target_os = "linux")]
+            AnyBackend::Nm(b) => b.check_reachability(profile, status).await,
+            #[cfg(windows)]
+            AnyBackend::Win(b) => b.check_reachability(profile, status).await,
+            AnyBackend::Unavailable(_) => aegis_core::Feature::Off,
+        }
+    }
+
+    async fn verify_protection(
+        &self,
+        profile: &ProfileSummary,
+        settings: &Settings,
+        status: &TunnelStatus,
+    ) -> Protection {
+        match self {
+            AnyBackend::Mock(b) => b.verify_protection(profile, settings, status).await,
+            #[cfg(target_os = "linux")]
+            AnyBackend::Nm(b) => b.verify_protection(profile, settings, status).await,
+            #[cfg(windows)]
+            AnyBackend::Win(b) => b.verify_protection(profile, settings, status).await,
+            AnyBackend::Unavailable(_) => Protection::off(),
+        }
+    }
+
+    async fn check_public_ip(&self, profile: &ProfileSummary, status: &TunnelStatus) -> Feature {
+        match self {
+            AnyBackend::Mock(b) => b.check_public_ip(profile, status).await,
+            #[cfg(target_os = "linux")]
+            AnyBackend::Nm(b) => b.check_public_ip(profile, status).await,
+            #[cfg(windows)]
+            AnyBackend::Win(b) => b.check_public_ip(profile, status).await,
+            AnyBackend::Unavailable(_) => Feature::Off,
         }
     }
 }

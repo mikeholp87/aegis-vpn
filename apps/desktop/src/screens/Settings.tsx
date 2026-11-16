@@ -18,8 +18,8 @@ export function SettingsScreen() {
   const ksUnsupported = caps?.kill_switch.status !== "supported";
 
   return (
-    <div className="flex max-w-3xl flex-col gap-5">
-      <h1 className="text-xl font-semibold">Settings</h1>
+    <div className="flex max-w-3xl flex-col gap-7">
+      <h1 className="text-[28px] leading-tight font-semibold tracking-[-0.015em]">Settings</h1>
 
       <Panel title="Appearance">
         <div className="flex items-center justify-between py-3">
@@ -121,7 +121,7 @@ export function SettingsScreen() {
           <div className="font-medium">DNS and IPv6</div>
           <p className="mt-0.5 max-w-[65ch] text-muted">
             {caps?.dns_protection.status === "supported"
-              ? "Full-tunnel profiles route DNS to the profile's servers and IPv6 through the tunnel. The dashboard shows whether this is configured or verified."
+              ? "Full-tunnel profiles send every DNS lookup to the profile's servers and IPv6 through the tunnel. If a profile has no IPv6, IPv6 is blocked while connected. Aegis re-checks this every few seconds; the dashboard shows the result."
               : (supportNote(caps?.dns_protection, "DNS protection") ?? "")}
           </p>
         </div>
@@ -129,19 +129,27 @@ export function SettingsScreen() {
 
       <Panel title="Privacy">
         <Switch
+          label="Connectivity check"
+          checked={settings.connectivity_check}
+          onChange={(v) => set({ connectivity_check: v })}
+          description="While connected, look up example.com and whoami.akamai.net through your tunnel's DNS (at most once a minute). That confirms the resolver answers and shows the egress IPv4 on the dashboard. The resolver sees those queries. On by default; turn off to skip them."
+        />
+        <Switch
           label="Notifications"
           checked={settings.notifications}
           onChange={(v) => set({ notifications: v })}
         />
         <Switch
           label="Check for updates"
-          description="Not available yet: release signing has not been set up. Aegis makes no network requests of its own."
+          description="Not available yet: release signing has not been set up. Aegis makes no update requests."
           checked={false}
           disabled
           onChange={() => {}}
         />
         <p className="border-t border-line py-3 text-[13px] text-muted">
-          Aegis VPN collects no analytics and needs no account.
+          Aegis VPN collects no analytics and needs no account. Connectivity checks contact only the tunnel's
+          configured DNS resolver (example.com reachability and whoami for public IP). Idle VPN servers are
+          never probed.
         </p>
       </Panel>
     </div>

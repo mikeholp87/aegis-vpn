@@ -3,8 +3,8 @@ import { type ButtonHTMLAttributes, type ReactNode, useEffect, useId, useRef } f
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 
 const variants: Record<Variant, string> = {
-  primary: "bg-accent text-accent-fg hover:brightness-110 border-transparent",
-  secondary: "bg-surface text-fg border-line hover:bg-raised",
+  primary: "bg-accent text-accent-fg hover:opacity-90 border-transparent",
+  secondary: "bg-surface text-fg border-line hover:border-muted/60 hover:bg-raised",
   ghost: "bg-transparent text-fg border-transparent hover:bg-raised",
   danger: "bg-danger text-white border-transparent hover:brightness-110",
 };
@@ -17,7 +17,7 @@ export function Button({
   return (
     <button
       type="button"
-      className={`inline-flex items-center justify-center gap-1.5 rounded-md border px-3 py-1.5 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${className}`}
+      className={`inline-flex items-center justify-center gap-1.5 rounded-md border px-3 py-1.5 text-[13px] font-semibold transition-[background-color,border-color,opacity] disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${className}`}
       {...props}
     />
   );
@@ -121,13 +121,14 @@ export function TextField({
 export type Tone = "ok" | "pending" | "bad" | "none";
 
 export function Dot({ tone }: { tone: Tone }) {
+  // Shape differs per tone so state never depends on colour alone.
   const c = {
-    ok: "bg-accent",
-    pending: "bg-pending",
-    bad: "bg-danger",
-    none: "bg-muted/50",
+    ok: "rounded-full bg-ok",
+    pending: "rounded-full border-2 border-pending",
+    bad: "rotate-45 rounded-[1px] bg-danger scale-90",
+    none: "rounded-full border-[1.5px] border-muted/70",
   }[tone];
-  return <span aria-hidden className={`inline-block h-2 w-2 shrink-0 rounded-full ${c}`} />;
+  return <span aria-hidden className={`inline-block h-2.5 w-2.5 shrink-0 ${c}`} />;
 }
 
 /** Key/value row. `state` makes unavailable/pending values explicit. */
@@ -168,14 +169,14 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={`rounded-lg border border-line bg-surface ${className}`}>
+    <section className={className}>
       {title && (
-        <header className="flex items-center justify-between border-b border-line px-4 py-2.5">
-          <h2 className="text-[13px] font-semibold">{title}</h2>
+        <header className="mb-2 flex min-h-7 items-center justify-between gap-3 px-1">
+          <h2 className="text-[15px] font-semibold">{title}</h2>
           {actions}
         </header>
       )}
-      <div className="px-4 py-1">{children}</div>
+      <div className="rounded-xl border border-line bg-surface px-4 py-1">{children}</div>
     </section>
   );
 }
@@ -207,14 +208,14 @@ export function Modal({
       ref={ref}
       aria-labelledby={titleId}
       onClose={onClose}
-      className={`m-auto max-h-[85vh] w-[calc(100%-32px)] overflow-auto rounded-lg border border-line bg-surface p-0 text-fg shadow-2xl ${
+      className={`m-auto max-h-[85vh] w-[calc(100%-32px)] overflow-auto rounded-2xl border border-line bg-surface p-0 text-fg shadow-[0_24px_60px_-20px_rgb(10_16_22/0.45)] ${
         wide ? "max-w-3xl" : "max-w-md"
       }`}
     >
       {open && (
         <>
-          <header className="sticky top-0 border-b border-line bg-surface px-5 py-3">
-            <h2 id={titleId} className="font-semibold">
+          <header className="sticky top-0 z-10 border-b border-line bg-surface px-5 py-3.5">
+            <h2 id={titleId} className="text-[17px] font-semibold">
               {title}
             </h2>
           </header>
@@ -286,7 +287,7 @@ export function Segmented<T extends string>({
               onChange={() => onChange(o.value)}
               className="peer sr-only"
             />
-            <span className="block rounded-md border border-line px-2.5 py-1 text-[12.5px] text-muted peer-checked:border-accent peer-checked:bg-accent-soft peer-checked:text-fg peer-focus-visible:outline-2 peer-focus-visible:outline-accent hover:text-fg">
+            <span className="block rounded-md border border-line bg-surface px-2.5 py-1 text-[12.5px] text-muted peer-checked:border-accent peer-checked:bg-accent peer-checked:text-accent-fg peer-focus-visible:outline-2 peer-focus-visible:outline-focus hover:text-fg">
               {o.label}
             </span>
           </label>

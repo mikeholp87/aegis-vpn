@@ -4,8 +4,8 @@ import { useStore } from "../lib/store";
 export function About() {
   const { info, caps } = useStore();
   return (
-    <div className="flex max-w-3xl flex-col gap-5">
-      <h1 className="text-xl font-semibold">About Aegis VPN</h1>
+    <div className="flex max-w-3xl flex-col gap-7">
+      <h1 className="text-[28px] leading-tight font-semibold tracking-[-0.015em]">About Aegis VPN</h1>
       <Panel>
         <dl>
           <Row label="Version">{info?.version}</Row>

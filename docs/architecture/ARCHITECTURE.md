@@ -68,3 +68,41 @@ On next start, `recover()` adopts it.
 
 Root helper (kill switch, non-NM fallback, exact handshake time), Windows
 service, updater, packaging scripts. See `docs/ROADMAP.md`.
+
+## Locations and registry
+
+`aegis-core::registry` adds secret-free `ServerMetadata` to the existing
+`ProfileMeta`; the profile ID is the server ID. It deliberately adds no second
+credential store, endpoint record or connection engine. Old `profiles.json`
+records deserialize with default metadata (enabled, unassigned, no history),
+then the existing atomic writer includes it on the next mutation. Missing
+settings fields also default; favorites and preferred-country selection use
+`settings.json`. No destructive migration or rewrite occurs at startup.
+
+The bundled ISO country catalog is separate from per-profile metadata and
+credentials. `ServerUpdate` accepts only editable fields; clients cannot forge
+connection timestamps or health. Configuration updates invalidate old response
+samples and newly generated keys mark registration pending.
+
+Tauri adds five explicitly permissioned commands: `country_catalog`,
+`update_server`, `server_health`, `refresh_server_health`, `quick_connect`.
+Listing, add/import/edit/delete, connect/disconnect/switch and preferred-server
+operations reuse the existing profile commands. Filtering/grouping are pure UI
+projections; Rust alone validates metadata and chooses Quick Connect candidates.
+`Snapshot.health` shares the engine event stream, with no second connection
+state store or background scanner. Listeners register before the initial fetch
+so startup snapshots cannot overwrite a newer event.
+
+Connect and Quick Connect take the existing operation lock with immediate Busy
+rejection. A cancellable load/validate preflight runs before old-tunnel teardown.
+Activation and backend ID/link confirmation share a bounded cancellable timeout.
+The existing Preparing/Connecting/Disconnecting/Connected/Failed/Uncertain states
+express each sequential switch step. Cleanup uncertainty blocks unsafe edits;
+requested kill-switch protection blocks unsupported connection/switching.
+
+Successful history requires fresh received data or a recent runtime handshake;
+activation alone does not enter recents. Failed connection/reconnect attempts
+cool down Quick Connect candidates. Recent response evidence expires after
+five minutes; RTT remains absent because no supported sampler is implemented.
+See [Locations](../features/LOCATIONS.md) for operational limits and pending
+Windows/protected-switch acceptance.

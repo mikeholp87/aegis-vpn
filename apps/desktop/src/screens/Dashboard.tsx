@@ -1,11 +1,13 @@
-import { useEffect, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useState } from "react";
 import type { ScreenId } from "../App";
 import { Button, Dot, Panel, Row, type Tone } from "../components/ui";
 import { api } from "../lib/api";
 import { featureText, featureTone, isActive, isBusy, stateHeadline, stateTone } from "../lib/connection";
 import { ago, bytes, clock, duration, rate, routeLabel } from "../lib/format";
+import { locationLabel } from "../lib/locations";
 import { useStore } from "../lib/store";
 import type { Feature, ProfileView } from "../lib/types";
+import { CountryFlag } from "./Locations";
 
 function useNow(active: boolean) {
   const [now, setNow] = useState(Date.now());
@@ -18,29 +20,35 @@ function useNow(active: boolean) {
 }
 
 export function Dashboard({ goTo }: { goTo: (s: ScreenId) => void }) {
-  const { snapshot, profiles, settings, events, run, caps } = useStore();
+  const { snapshot, profiles, settings, events, run, caps, countries } = useStore();
   const selectId = useId();
+  const headId = useId();
   const state = snapshot?.state ?? { state: "disconnected" as const };
   const active = isActive(state);
   const now = useNow(state.state === "connected");
-  const fallback = profiles.find((p) => p.preferred) ?? profiles[0];
+  const lastUsed = profiles
+    .filter((p) => p.server.last_connected_ms !== null)
+    .sort((a, b) => (b.server.last_connected_ms ?? 0) - (a.server.last_connected_ms ?? 0))[0];
+  const fallback = lastUsed ?? profiles.find((p) => p.preferred) ?? profiles[0];
   const [chosen, setChosen] = useState<string | undefined>(undefined);
   const selected: ProfileView | undefined =
     snapshot?.profile ?? profiles.find((p) => p.id === chosen) ?? fallback;
 
   if (profiles.length === 0) {
     return (
-      <div className="mx-auto max-w-md py-16 text-center">
-        <h1 className="text-xl font-semibold">Add a WireGuard profile to get started</h1>
-        <p className="mt-2 text-muted">
+      <div className="max-w-[46ch] py-14">
+        <h1 className="text-[34px] leading-[1.1] font-semibold tracking-[-0.015em]">
+          Add a WireGuard profile to get started
+        </h1>
+        <p className="mt-3 text-[15px] text-muted">
           Import a <span className="font-mono">.conf</span> file from your VPN provider or server, or drop it
           onto this window.
         </p>
-        <div className="mt-6 flex justify-center gap-2">
+        <div className="mt-7 flex gap-2">
           <Button variant="primary" onClick={() => run(api.importDialog)}>
             Import profile
           </Button>
-          <Button onClick={() => goTo("profiles")}>Create manually</Button>
+          <Button onClick={() => goTo("locations")}>Add server</Button>
         </div>
       </div>
     );
@@ -50,127 +58,188 @@ export function Dashboard({ goTo }: { goTo: (s: ScreenId) => void }) {
   const connected = state.state === "connected";
   const s = selected?.summary;
 
+  const uncertain = state.state === "uncertain";
+  const tunnelTone: Tone = connected ? "ok" : uncertain ? "bad" : active ? "pending" : "none";
+  const serverTone: Tone = connected ? stateTone(state) : "none";
+  const reach = snapshot?.reachability ?? { status: "off" as const };
+  const reachTone: HopTone =
+    reach.status === "verified" ? "ok" : reach.status === "failed" ? "bad" : "untested";
+  const reachDetail =
+    reach.status === "verified"
+      ? "Tunnel DNS answered"
+      : reach.status === "failed"
+        ? reach.detail
+        : reach.status === "unsupported"
+          ? `Not tested: ${reach.detail}`
+          : connected
+            ? "Checking"
+            : "Not tested";
+
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[13px] text-muted">
-            <Dot tone={stateTone(state)} />
-            <span>
-              {state.state === "reconnecting" ? `Attempt ${state.attempt}` : statusSub(state.state)}
-            </span>
+    <div className="flex flex-col gap-9">
+      <section aria-labelledby={headId} className="flex flex-col gap-7">
+        <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
+          <div className="min-w-0">
+            <h1
+              id={headId}
+              className="text-[34px] leading-[1.1] font-semibold tracking-[-0.015em] text-balance"
+              aria-live="polite"
+            >
+              {stateHeadline(state, selected?.name)}
+            </h1>
+            <p
+              className={`mt-2 max-w-[62ch] text-[14px] ${state.state === "failed" || uncertain ? "text-danger" : "text-muted"}`}
+            >
+              {state.state === "failed" || state.state === "uncertain"
+                ? state.reason
+                : state.state === "reconnecting"
+                  ? `Retrying, attempt ${state.attempt}`
+                  : statusSub(state.state)}
+              {connected && ` for ${duration(now - state.since_ms)}`}
+            </p>
           </div>
-          <h1
-            className="mt-1 truncate text-[26px] leading-tight font-semibold tracking-tight"
-            aria-live="polite"
-          >
-            {stateHeadline(state, selected?.name)}
-          </h1>
-          {state.state === "failed" && (
-            <p className="mt-1 max-w-[70ch] text-[13px] text-danger">{state.reason}</p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <label htmlFor={selectId} className="sr-only">
-            Profile
-          </label>
-          <select
-            id={selectId}
-            value={selected?.id}
-            disabled={active}
-            onChange={(e) => setChosen(e.target.value)}
-            className="max-w-56 rounded-md border border-line bg-surface px-2.5 py-1.5 text-[13px] disabled:opacity-60"
-          >
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-                {p.id === settings?.preferred_profile ? " (preferred)" : ""}
-              </option>
-            ))}
-          </select>
-          <PrimaryAction selected={selected} />
-        </div>
-      </header>
-
-      <div className="grid gap-5 md:grid-cols-[minmax(260px,1fr)_2fr]">
-        <Panel title="What is confirmed">
-          <ol className="py-2">
-            <Step
-              tone={connected ? "ok" : active ? "pending" : "none"}
-              title="Tunnel interface"
-              detail={connected ? (stats?.interface ?? "Up") : active ? "Starting" : "Not started"}
-            />
-            <Step
-              tone={connected ? stateTone(state) : "none"}
-              title="Server response"
-              detail={
-                !connected
-                  ? "Not started"
-                  : state.peer === "confirmed"
-                    ? "Server answered"
-                    : state.peer === "no_response"
-                      ? "Nothing received. Check endpoint, keys and firewall."
-                      : "Waiting for data from the server"
-              }
-            />
-            <FeatureStep title="Kill switch" f={snapshot?.protection.kill_switch} />
-            <FeatureStep title="DNS leak protection" f={snapshot?.protection.dns} />
-            <FeatureStep title="IPv6 protection" f={snapshot?.protection.ipv6} />
-            <Step tone="none" title="Internet reachability" detail="Not tested" last />
-          </ol>
-        </Panel>
-
-        <Panel title="Connection">
-          <dl className="grid gap-x-8 sm:grid-cols-2">
-            <div>
-              <Row label="Endpoint">{s?.endpoints[0] ?? "None"}</Row>
-              <Row label="Tunnel address">
-                <span className="font-mono text-[12.5px]">{s?.addresses.join(", ")}</span>
-              </Row>
-              <Row label="Routing">{s ? routeLabel[s.route_kind] : ""}</Row>
-              <Row label="Duration" state={connected ? "confirmed" : "unavailable"}>
-                {connected ? duration(now - state.since_ms) : "Not connected"}
-              </Row>
-              <Row
-                label="Last handshake"
-                state={stats?.last_handshake_ms ? "confirmed" : connected ? "pending" : "unavailable"}
-              >
-                {stats?.last_handshake_ms
-                  ? `${ago(stats.last_handshake_ms, now)}`
-                  : connected
-                    ? caps?.exact_handshake_time.status === "supported"
-                      ? "None yet"
-                      : "Not readable on this system"
-                    : undefined}
-              </Row>
-            </div>
-            <div>
-              <Row label="Received" state={stats ? "confirmed" : "unavailable"}>
-                {stats ? bytes(stats.rx_bytes) : undefined}
-              </Row>
-              <Row label="Sent" state={stats ? "confirmed" : "unavailable"}>
-                {stats ? bytes(stats.tx_bytes) : undefined}
-              </Row>
-              <Row label="Download" state={stats ? "confirmed" : "unavailable"}>
-                {stats ? rate(stats.rx_rate_bps) : undefined}
-              </Row>
-              <Row label="Upload" state={stats ? "confirmed" : "unavailable"}>
-                {stats ? rate(stats.tx_rate_bps) : undefined}
-              </Row>
-              <Row label="Public IP" state="unavailable">
-                Lookup not enabled
-              </Row>
-            </div>
-          </dl>
-          {s && s.warnings.length > 0 && (
-            <ul className="my-2 rounded-md bg-pending-soft px-3 py-2 text-[12.5px] text-pending">
-              {s.warnings.map((w) => (
-                <li key={w}>{w}</li>
+          <div className="flex items-center gap-2 pt-1">
+            <label htmlFor={selectId} className="sr-only">
+              Profile
+            </label>
+            <select
+              id={selectId}
+              value={selected?.id}
+              disabled={active}
+              onChange={(e) => setChosen(e.target.value)}
+              className="h-10 max-w-56 rounded-lg border border-line bg-surface px-3 text-[14px] disabled:opacity-60"
+            >
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.id === settings?.preferred_profile ? " (preferred)" : ""}
+                </option>
               ))}
-            </ul>
-          )}
-        </Panel>
-      </div>
+            </select>
+            <PrimaryAction selected={selected} />
+          </div>
+        </header>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <CountryFlag code={selected?.server.location?.country_code} />
+            <div>
+              <p className="font-semibold">
+                {selected ? locationLabel(selected, countries) : "No location selected"}
+              </p>
+              <p className="text-xs text-muted">
+                {connected ? "Active WireGuard profile" : "Selected WireGuard profile"}: {selected?.name}
+                {selected?.server.location ? " · User-assigned location" : ""}
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              disabled={isBusy(state) || state.state === "reconnecting" || state.state === "uncertain"}
+              onClick={() => run(api.quickConnect)}
+            >
+              Quick Connect
+            </Button>
+            <Button onClick={() => goTo("locations")}>Change location</Button>
+          </div>
+        </div>
+
+        <ol aria-label="What is confirmed" className="grid grid-cols-4 gap-x-1.5">
+          <Hop tone={tunnelTone} title="This device" detail={s ? (s.addresses[0] ?? "") : ""} mono />
+          <Hop
+            tone={tunnelTone}
+            title="Tunnel interface"
+            detail={
+              connected
+                ? (stats?.interface ?? "Up")
+                : uncertain
+                  ? "Status unknown"
+                  : active
+                    ? "Starting"
+                    : "Not started"
+            }
+            mono={connected && !!stats?.interface}
+          />
+          <Hop
+            tone={serverTone}
+            title="Server response"
+            detail={
+              !connected
+                ? "Not started"
+                : state.peer === "confirmed"
+                  ? "Server answered"
+                  : state.peer === "no_response"
+                    ? "Nothing received. Check endpoint, keys and firewall."
+                    : "Waiting for data from the server"
+            }
+          />
+          <Hop tone={reachTone} title="Internet reachability" detail={reachDetail} />
+        </ol>
+
+        <ul
+          aria-label="Protection"
+          className="grid gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-3"
+        >
+          <Guard title="Kill switch" f={snapshot?.protection.kill_switch} />
+          <Guard title="DNS leak protection" f={snapshot?.protection.dns} />
+          <Guard title="IPv6 protection" f={snapshot?.protection.ipv6} />
+        </ul>
+      </section>
+
+      <Panel title="Connection details">
+        <dl className="grid gap-x-10 sm:grid-cols-2">
+          <div>
+            <Row label="Endpoint">
+              <span className="font-mono text-[13px]">{s?.endpoints[0] ?? "None"}</span>
+            </Row>
+            <Row label="Tunnel address">
+              <span className="font-mono text-[13px]">{s?.addresses.join(", ")}</span>
+            </Row>
+            <Row label="Routing">{s ? routeLabel[s.route_kind] : ""}</Row>
+            <Row
+              label={
+                caps?.exact_handshake_time.status === "supported" ? "Last handshake" : "Last server response"
+              }
+              state={stats?.last_handshake_ms ? "confirmed" : connected ? "pending" : "unavailable"}
+            >
+              {stats?.last_handshake_ms
+                ? ago(stats.last_handshake_ms, now)
+                : connected
+                  ? caps?.exact_handshake_time.status === "supported"
+                    ? "None yet"
+                    : state.peer === "no_response"
+                      ? "No response yet"
+                      : "Waiting for the server"
+                  : undefined}
+            </Row>
+            <PublicIpRow connected={connected} f={snapshot?.public_ip} />
+          </div>
+          <div>
+            <Row label="Received" state={stats ? "confirmed" : "unavailable"}>
+              {stats ? bytes(stats.rx_bytes) : undefined}
+            </Row>
+            <Row label="Sent" state={stats ? "confirmed" : "unavailable"}>
+              {stats ? bytes(stats.tx_bytes) : undefined}
+            </Row>
+            <Row label="Download" state={stats ? "confirmed" : "unavailable"}>
+              {stats ? rate(stats.rx_rate_bps) : undefined}
+            </Row>
+            <Row label="Upload" state={stats ? "confirmed" : "unavailable"}>
+              {stats ? rate(stats.tx_rate_bps) : undefined}
+            </Row>
+            <Row label="Duration" state={connected ? "confirmed" : "unavailable"}>
+              {connected ? duration(now - state.since_ms) : "Not connected"}
+            </Row>
+          </div>
+        </dl>
+        {s && s.warnings.length > 0 && (
+          <ul className="my-3 rounded-lg bg-pending-soft px-3 py-2 text-[13px] text-pending">
+            {s.warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        )}
+      </Panel>
 
       <Panel
         title="Recent events"
@@ -190,9 +259,9 @@ export function Dashboard({ goTo }: { goTo: (s: ScreenId) => void }) {
               .map((e, i) => (
                 <li
                   key={`${e.at_ms}-${i}`}
-                  className="flex gap-3 border-b border-line py-1.5 last:border-b-0"
+                  className="flex items-baseline gap-3 border-b border-line py-2 last:border-b-0"
                 >
-                  <span className="w-20 shrink-0 text-muted">{clock(e.at_ms)}</span>
+                  <span className="w-20 shrink-0 font-mono text-[12.5px] text-muted">{clock(e.at_ms)}</span>
                   <span
                     className={e.level === "error" ? "text-danger" : e.level === "warn" ? "text-pending" : ""}
                   >
@@ -215,19 +284,31 @@ function statusSub(s: string) {
     connected: "Active",
     disconnecting: "Removing the tunnel",
     failed: "Stopped",
+    uncertain: "May still be active",
     reconnecting: "Retrying",
   }[s];
 }
+
+const big = "h-10 min-w-32 rounded-lg px-5 text-[14px]";
 
 function PrimaryAction({ selected }: { selected?: ProfileView }) {
   const { snapshot, run } = useStore();
   const state = snapshot?.state ?? { state: "disconnected" as const };
   if (state.state === "connecting" || state.state === "preparing" || state.state === "reconnecting") {
-    return <Button onClick={() => run(api.cancel)}>Cancel</Button>;
+    return (
+      <Button className={big} onClick={() => run(api.cancel)}>
+        Cancel
+      </Button>
+    );
   }
   if (isActive(state)) {
     return (
-      <Button variant="secondary" disabled={isBusy(state)} onClick={() => run(api.disconnect)}>
+      <Button
+        variant="secondary"
+        className={big}
+        disabled={isBusy(state)}
+        onClick={() => run(api.disconnect)}
+      >
         Disconnect
       </Button>
     );
@@ -235,7 +316,13 @@ function PrimaryAction({ selected }: { selected?: ProfileView }) {
   return (
     <Button
       variant="primary"
-      disabled={!selected}
+      className={big}
+      disabled={!selected?.server.enabled || selected.server.registration_pending}
+      title={
+        selected?.server.registration_pending
+          ? "Register the client identity on your server, then confirm registration in Locations"
+          : undefined
+      }
       onClick={() => selected && run(() => api.connect(selected.id))}
     >
       Connect
@@ -243,23 +330,72 @@ function PrimaryAction({ selected }: { selected?: ProfileView }) {
   );
 }
 
-function Step({ tone, title, detail, last }: { tone: Tone; title: string; detail: string; last?: boolean }) {
+type HopTone = Tone | "untested";
+
+/** One hop of the tunnel path. The bar leading into it is lit only when that hop is confirmed. */
+function Hop({
+  tone,
+  title,
+  detail,
+  mono,
+}: {
+  tone: HopTone;
+  title: string;
+  detail: string;
+  mono?: boolean;
+}) {
   return (
-    <li className="relative flex gap-3 pb-3 last:pb-1">
-      <div className="flex flex-col items-center pt-1.5">
-        <Dot tone={tone} />
-        {!last && <span aria-hidden className="mt-1 w-px flex-1 bg-line" />}
+    <li data-tone={tone} className="hop flex min-w-0 flex-col gap-2.5">
+      <div className="hop-line" aria-hidden />
+      <div className="flex items-center gap-2">
+        <Dot tone={tone === "untested" ? "none" : tone} />
+        <span className="truncate text-[14px] font-semibold">{title}</span>
       </div>
-      <div className="min-w-0">
-        <div className="font-medium">{title}</div>
-        <div className={`text-[12.5px] ${tone === "bad" ? "text-danger" : "text-muted"}`}>{detail}</div>
-      </div>
+      <span
+        className={`text-[13px] leading-snug break-words ${tone === "bad" ? "text-danger" : "text-muted"} ${
+          mono ? "font-mono" : ""
+        }`}
+      >
+        {detail}
+      </span>
     </li>
   );
 }
 
-function FeatureStep({ title, f }: { title: string; f?: Feature }) {
+function Guard({ title, f }: { title: string; f?: Feature }) {
   const feature = f ?? { status: "off" as const };
-  const detail = "detail" in feature ? `${featureText(feature)}: ${feature.detail}` : featureText(feature);
-  return <Step tone={featureTone(feature)} title={title} detail={detail} />;
+  const tone = featureTone(feature);
+  return (
+    <li className="flex flex-col gap-1 bg-surface px-4 py-3">
+      <span className="text-[13px] text-muted">{title}</span>
+      <span className="flex items-center gap-2 font-semibold">
+        <Dot tone={tone} />
+        <span className={tone === "bad" ? "text-danger" : ""}>{featureText(feature)}</span>
+      </span>
+      {"detail" in feature && <span className="text-[12.5px] leading-snug text-muted">{feature.detail}</span>}
+    </li>
+  );
+}
+
+function PublicIpRow({ connected, f }: { connected: boolean; f?: Feature }) {
+  const feature = f ?? { status: "off" as const };
+  const state =
+    feature.status === "verified" ? "confirmed" : feature.status === "configured" ? "pending" : "unavailable";
+  let body: ReactNode;
+  if (feature.status === "verified") {
+    body = <span className="font-mono text-[13px]">{feature.detail}</span>;
+  } else if (feature.status === "configured") {
+    body = feature.detail;
+  } else if (feature.status === "failed" || feature.status === "unsupported") {
+    body = <span className="text-danger">{feature.detail}</span>;
+  } else if (connected) {
+    body = "Enable connectivity check in Settings";
+  } else {
+    body = undefined;
+  }
+  return (
+    <Row label="Public IP" state={state}>
+      {body}
+    </Row>
+  );
 }
