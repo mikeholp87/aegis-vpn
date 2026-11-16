@@ -1,0 +1,149 @@
+import { useId } from "react";
+import { Panel, Switch } from "../components/ui";
+import { useStore } from "../lib/store";
+import type { Settings, Support, Theme } from "../lib/types";
+
+function supportNote(s: Support | undefined, what: string) {
+  if (!s || s.status === "supported") return undefined;
+  return `${what} is not available on this system: ${s.detail}`;
+}
+
+export function SettingsScreen() {
+  const { settings, saveSettings, caps, profiles, info } = useStore();
+  const themeId = useId();
+  const prefId = useId();
+  const attemptsId = useId();
+  if (!settings) return null;
+  const set = (patch: Partial<Settings>) => saveSettings({ ...settings, ...patch });
+  const ksUnsupported = caps?.kill_switch.status !== "supported";
+
+  return (
+    <div className="flex max-w-3xl flex-col gap-5">
+      <h1 className="text-xl font-semibold">Settings</h1>
+
+      <Panel title="Appearance">
+        <div className="flex items-center justify-between py-3">
+          <label htmlFor={themeId} className="font-medium">
+            Theme
+          </label>
+          <select
+            id={themeId}
+            value={settings.theme}
+            onChange={(e) => set({ theme: e.target.value as Theme })}
+            className="rounded-md border border-line bg-surface px-2.5 py-1.5 text-[13px]"
+          >
+            <option value="system">Match system</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </div>
+      </Panel>
+
+      <Panel title="Startup and window">
+        <Switch
+          label="Start Aegis VPN when you sign in"
+          checked={settings.launch_on_login}
+          onChange={(v) => set({ launch_on_login: v })}
+        />
+        <Switch
+          label="Connect on launch"
+          description="Connects the preferred profile when the app starts. Off by default."
+          checked={settings.connect_on_launch}
+          onChange={(v) => set({ connect_on_launch: v })}
+          disabled={!settings.preferred_profile}
+        />
+        <div className="flex items-center justify-between border-t border-line py-3">
+          <label htmlFor={prefId} className="font-medium">
+            Preferred profile
+          </label>
+          <select
+            id={prefId}
+            value={settings.preferred_profile ?? ""}
+            onChange={(e) => set({ preferred_profile: e.target.value || null })}
+            className="max-w-64 rounded-md border border-line bg-surface px-2.5 py-1.5 text-[13px]"
+          >
+            <option value="">None</option>
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <Switch
+          label="Closing the window keeps Aegis VPN in the tray"
+          description={
+            info?.tray_available
+              ? "Closing the window never disconnects the VPN. Use Disconnect or Quit from the tray menu."
+              : "No system tray was detected, so closing the window quits the app. An active tunnel stays up."
+          }
+          checked={settings.close_to_tray && !!info?.tray_available}
+          disabled={!info?.tray_available}
+          onChange={(v) => set({ close_to_tray: v })}
+        />
+      </Panel>
+
+      <Panel title="Reconnection">
+        <Switch
+          label="Reconnect automatically"
+          description="If the tunnel drops, retry with increasing delays (1 s up to 60 s)."
+          checked={settings.auto_reconnect}
+          onChange={(v) => set({ auto_reconnect: v })}
+        />
+        <div className="flex items-center justify-between border-t border-line py-3">
+          <label htmlFor={attemptsId} className="font-medium">
+            Maximum attempts
+          </label>
+          <input
+            id={attemptsId}
+            type="number"
+            min={1}
+            max={50}
+            value={settings.reconnect_max_attempts}
+            onChange={(e) => set({ reconnect_max_attempts: Number(e.target.value) || 1 })}
+            className="w-20 rounded-md border border-line bg-surface px-2.5 py-1.5 text-[13px]"
+          />
+        </div>
+      </Panel>
+
+      <Panel title="Protection">
+        <Switch
+          label="Kill switch"
+          description={
+            ksUnsupported
+              ? `${supportNote(caps?.kill_switch, "The kill switch")}. While this is on, Aegis refuses to connect rather than connect without it.`
+              : "Blocks traffic outside the tunnel while a full-tunnel profile is connected."
+          }
+          checked={settings.kill_switch}
+          onChange={(v) => set({ kill_switch: v })}
+        />
+        <div className="border-t border-line py-3 text-[13px]">
+          <div className="font-medium">DNS and IPv6</div>
+          <p className="mt-0.5 max-w-[65ch] text-muted">
+            {caps?.dns_protection.status === "supported"
+              ? "Full-tunnel profiles route DNS to the profile's servers and IPv6 through the tunnel. The dashboard shows whether this is configured or verified."
+              : (supportNote(caps?.dns_protection, "DNS protection") ?? "")}
+          </p>
+        </div>
+      </Panel>
+
+      <Panel title="Privacy">
+        <Switch
+          label="Notifications"
+          checked={settings.notifications}
+          onChange={(v) => set({ notifications: v })}
+        />
+        <Switch
+          label="Check for updates"
+          description="Not available yet: release signing has not been set up. Aegis makes no network requests of its own."
+          checked={false}
+          disabled
+          onChange={() => {}}
+        />
+        <p className="border-t border-line py-3 text-[13px] text-muted">
+          Aegis VPN collects no analytics and needs no account.
+        </p>
+      </Panel>
+    </div>
+  );
+}

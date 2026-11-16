@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+/* Light tokens */
+:root {
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --raised: #eef1f5;
+  --line: #dce1e8;
+  --fg: #18202c;
+  --muted: #5b6576;
+  --accent: #13897c;
+  --accent-fg: #ffffff;
+  --accent-soft: #d8efec;
+  --pending: #9a6b12;
+  --pending-soft: #f6ead0;
+  --danger: #b93b3b;
+  --danger-soft: #f7dede;
+  color-scheme: light;
+}
+
+/* Dark tokens: charcoal/navy surfaces, soft teal for active state */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1420;
+    --surface: #151c2a;
+    --raised: #1b2434;
+    --line: #263042;
+    --fg: #e6eaf0;
+    --muted: #8c96a8;
+    --accent: #3fc1b0;
+    --accent-fg: #06221e;
+    --accent-soft: #143430;
+    --pending: #d9a441;
+    --pending-soft: #33291a;
+    --danger: #e26d6d;
+    --danger-soft: #3a1e22;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1420;
+  --surface: #151c2a;
+  --raised: #1b2434;
+  --line: #263042;
+  --fg: #e6eaf0;
+  --muted: #8c96a8;
+  --accent: #3fc1b0;
+  --accent-fg: #06221e;
+  --accent-soft: #143430;
+  --pending: #d9a441;
+  --pending-soft: #33291a;
+  --danger: #e26d6d;
+  --danger-soft: #3a1e22;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-pending: var(--pending);
+  --color-pending-soft: var(--pending-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --font-sans: system-ui, "Segoe UI Variable", "Segoe UI", "Noto Sans", Cantarell, Ubuntu, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+input,
+textarea,
+.selectable {
+  user-select: text;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+dialog::backdrop {
+  background: rgb(5 8 14 / 0.55);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: must override every component */
+    transition-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: must override every component */
+    animation-duration: 0.01ms !important;
+  }
+}

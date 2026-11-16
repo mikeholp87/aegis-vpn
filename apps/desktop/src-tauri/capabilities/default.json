@@ -1,0 +1,32 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Permissions for the main window. No shell, no filesystem, no dialogs from web content: file selection happens in Rust.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-app-info",
+    "allow-capabilities",
+    "allow-snapshot",
+    "allow-events",
+    "allow-profiles",
+    "allow-settings",
+    "allow-set-settings",
+    "allow-connect",
+    "allow-disconnect",
+    "allow-cancel",
+    "allow-import-dialog",
+    "allow-new-draft",
+    "allow-profile-draft",
+    "allow-create-profile",
+    "allow-update-profile",
+    "allow-duplicate-profile",
+    "allow-delete-profile",
+    "allow-export-profile",
+    "allow-diagnostics",
+    "allow-export-diagnostics"
+  ]
+}

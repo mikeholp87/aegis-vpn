@@ -1,0 +1,13 @@
+[package]
+name = "aegis-linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+aegis-core.workspace = true
+aegis-config.workspace = true
+
+[lints]
+workspace = true
