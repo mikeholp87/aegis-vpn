@@ -5,10 +5,10 @@ Rust, Tauri 2 and React. Working name.
 
 > **Status: pre-alpha.** The Linux NetworkManager backend has passed live
 > split-route tests on a desktop and full-tunnel, DNS-leak, IPv6, reconnect and
-> NetworkManager-restart tests in a Debian 13 VM. Kill switch and Windows are
-> not implemented. The Windows backend is not implemented.
-> There is no kill switch yet. Do not rely on this for protection. See
-> [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/testing/TEST_RESULTS.md](docs/testing/TEST_RESULTS.md).
+> NetworkManager-restart tests in a Debian 13 VM. There is **no kill switch**
+> and the **Windows backend is not implemented**. Do not rely on this for
+> protection yet. See [docs/ROADMAP.md](docs/ROADMAP.md) and
+> [docs/testing/TEST_RESULTS.md](docs/testing/TEST_RESULTS.md).
 
 ## What it does
 
@@ -16,29 +16,161 @@ Rust, Tauri 2 and React. Working name.
   rejecting `PostUp`-style scripts and directives it cannot honour
 - Creates and edits profiles without ever showing or accepting raw keys in the UI
 - Connects through NetworkManager on Linux; tunnels keep running when the app closes
+  and are picked up again when it restarts
 - Shows what is actually confirmed: tunnel up, server responded, protection
-  configured or not, instead of a single "secure" badge
+  configured or verified, instead of a single "secure" badge
 - Locations directory for your own servers: country/city metadata, search, favorites,
   recent successful connections, Quick Connect and switching through the same engine
 - Automatic reconnect with bounded backoff, diagnostics, sanitized export
 - Light and dark themes, keyboard navigation, tray menu
 - No account or telemetry; optional connectivity checks have a Settings disclosure
 
-## Add your first VPN location
+Aegis is a client only. It does not come with VPN servers: you bring a WireGuard
+configuration from a VPN provider or from a server you run yourself.
 
-Open **Locations → Add server → Import WireGuard Configuration**, import a client
-`.conf` already registered on your server, assign its country/city, and save.
-Select the country and **Connect**. Wait for the server response; a tunnel being
-up alone is insufficient. See [Locations setup and limitations](docs/features/LOCATIONS.md).
-Switching currently has no kill-switch protection. Windows tunneling is pending.
+## Quick start: connect to a VPN provider
+
+Any provider that offers WireGuard configuration files works. Two examples:
+
+- **Proton VPN** (has a free tier): account.protonvpn.com → **Downloads →
+  WireGuard configuration** → platform **GNU/Linux** → choose a server, for
+  example in Switzerland → download the `.conf`.
+- **Mullvad**: mullvad.net → **Account → WireGuard configuration** → generate a
+  key → choose a location → download.
+
+Then:
+
+1. **Protect the file.** It contains your private key, and browsers usually save
+   it readable by every user on the machine:
+
+   ```sh
+   chmod 600 ~/Downloads/<your-file>.conf
+   ```
+
+2. **Import it.** In Aegis: **Locations → Add server → Import WireGuard
+   Configuration**, pick the file, choose the country (and optionally the city),
+   save. Aegis rejects files with `PreUp`/`PostUp`/`PreDown`/`PostDown` or
+   `SaveConfig` lines instead of running them; delete those lines and import again.
+3. **Connect.** Select the country and server, click **Connect**, and wait for
+   **Server answered**. "Tunnel up" alone only means the interface exists; the
+   server has answered once encrypted data comes back.
+4. **Switch location** with **Dashboard → Change location**, then pick another
+   server and **Switch server**. **Disconnect** returns to your normal connection.
+
+Provider files are usually *full tunnel* (`AllowedIPs = 0.0.0.0/0, ::/0`): all
+internet traffic, IPv4 and IPv6, goes through the VPN server.
+
+For your own server, see [Locations setup and limitations](docs/features/LOCATIONS.md),
+which also lists what the server operator has to configure.
+
+## DNS on Linux: make sure lookups go through the VPN
+
+Routing your traffic through the VPN is not enough if your DNS lookups (the
+names of the sites you visit) still go to your router or ISP. Aegis checks this
+after connecting and logs either
+
+```
+DNS leak protection verified: systemd-resolved sends all lookups to the tunnel's DNS servers …
+```
+
+or a warning such as
+
+```
+DNS leak protection check failed: /etc/resolv.conf lists DNS servers outside the tunnel, so some lookups can leak
+```
+
+Full-tunnel DNS protection relies on **systemd-resolved** being in charge of
+`/etc/resolv.conf`. Check:
+
+```sh
+resolvectl status | grep 'resolv.conf mode'
+```
+
+- `stub`: correct, nothing to do.
+- `foreign`, or `resolvectl` is missing: another program owns `/etc/resolv.conf`
+  and lookups can bypass the tunnel. Install and enable systemd-resolved, then
+  point `/etc/resolv.conf` at its stub:
+
+  ```sh
+  sudo apt install systemd-resolved        # Debian/Ubuntu; Fedora ships it enabled
+  sudo systemctl enable --now systemd-resolved
+  sudo ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+  ```
+
+  Reconnect the VPN afterwards (or restart the program that owned the file, see
+  Tailscale below).
+
+When it works, the tunnel link receives every lookup:
+
+```sh
+$ resolvectl query example.com
+example.com: 104.20.23.154       -- link: aegis-xxxxxxxx
+```
+
+### Using Aegis alongside Tailscale
+
+Tailscale and Aegis can run at the same time: tailnet traffic keeps its own
+route over `tailscale0`, everything else goes through the VPN.
+
+DNS needs one thing. If Tailscale started while systemd-resolved was not
+managing `/etc/resolv.conf`, Tailscale writes that file itself (`# resolv.conf(5)
+file generated by tailscale`, `nameserver 100.100.100.100`). All lookups then go to
+Tailscale's resolver, which forwards them outside the VPN, and Aegis reports a DNS
+leak. Fix:
+
+```sh
+sudo ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+sudo systemctl restart tailscaled
+```
+
+Tailscale then registers only your tailnet domain (`*.ts.net`) with
+systemd-resolved, and everything else follows the VPN. Check that both work:
+
+```sh
+resolvectl query example.com                    # link: aegis-…
+resolvectl query <machine>.<tailnet>.ts.net     # link: tailscale0
+```
+
+If the Tailscale admin console has **DNS → Override local DNS** enabled, Tailscale
+still claims every lookup. Turn that off, or stop Tailscale from managing DNS while
+using the VPN with `sudo tailscale set --accept-dns=false` (tailnet names then stop
+resolving until you set it back to `true`).
+
+## Check that it works
+
+- **In the app:** Dashboard shows Connected, **Server answered**, and the
+  DNS/IPv6 protection rows as Verified. Activity lists the same checks.
+- **From a terminal:**
+
+  ```sh
+  nmcli -t -f NAME,DEVICE,STATE connection show --active | grep Aegis   # activated on aegis-xxxxxxxx
+  ip route get 1.1.1.1                     # dev aegis-xxxxxxxx (full tunnel)
+  resolvectl query example.com             # link: aegis-xxxxxxxx
+  ```
+
+- **Exit location:** `curl https://ifconfig.co/country-iso` asks a third-party
+  service which country your traffic appears to come from. Geolocation databases
+  are approximate, and the country you assign in Locations is your own label,
+  not a verified location.
+
+## Troubleshooting
+
+| Symptom | What it means / what to do |
+|---|---|
+| Tunnel up, server never answers | Wrong or expired key, the provider removed the config, or UDP to the endpoint is blocked. Download a fresh `.conf`. |
+| "Reachability check failed: no answer from the tunnel's DNS server within 3 seconds" right after connecting | Some servers answer DNS slowly in the first seconds. Refresh status; if it keeps failing, try another server. |
+| "DNS leak protection check failed" | See [DNS on Linux](#dns-on-linux-make-sure-lookups-go-through-the-vpn). |
+| Tailnet names stop resolving | Tailscale is not registered with systemd-resolved; restart `tailscaled` after fixing `/etc/resolv.conf`. |
+| Import rejected | The file has script lines (`PostUp` …) or unsupported keys (`Table`, `FwMark`). Remove them; the message says which. |
+| Backend unavailable | NetworkManager is not running, or this is Windows (not implemented yet). |
 
 ## Supported platforms
 
 | Platform | Status |
 |---|---|
-| Linux with NetworkManager ≥ 1.16 (Ubuntu, Debian, Fedora; GNOME/KDE) | Split-route live test passed on Debian/KDE; rest of matrix pending |
+| Linux with NetworkManager ≥ 1.16 (Ubuntu, Debian, Fedora; GNOME/KDE) | Split-route live test passed on Debian/KDE; full tunnel, DNS and IPv6 leak tests passed in a Debian 13 VM; full tunnel with commercial servers checked by hand on one Debian/KDE desktop alongside Tailscale. Rest of the matrix pending. |
 | Linux without NetworkManager | Not supported yet (shown as unavailable) |
-| Windows 11 x64 | Not implemented |
+| Windows 11 x64 | Not implemented (CI build only) |
 
 ## Build from source
 
@@ -51,13 +183,40 @@ cd apps/desktop && pnpm install && pnpm tauri dev
 AEGIS_BACKEND=mock pnpm tauri dev
 ```
 
+The app icon source is `apps/desktop/src-tauri/icons/icon.svg`; regenerate all
+sizes with `pnpm tauri icon src-tauri/icons/icon.svg`.
+
+**Taskbar icon in dev builds (KDE/GNOME on Wayland):** the desktop looks up a
+window's icon from an installed `.desktop` file named after the app id
+(`aegis-desktop`), which `pnpm tauri dev` does not install. To see the icon while
+developing:
+
+```sh
+for n in 32 64 128 256 512; do
+  install -Dm644 /dev/null ~/.local/share/icons/hicolor/${n}x${n}/apps/aegis-desktop.png
+  magick -background none apps/desktop/src-tauri/icons/icon.svg -resize ${n}x${n} \
+    ~/.local/share/icons/hicolor/${n}x${n}/apps/aegis-desktop.png
+done
+cat > ~/.local/share/applications/aegis-desktop.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Aegis VPN
+Exec=aegis-desktop
+Icon=aegis-desktop
+StartupWMClass=aegis-desktop
+NoDisplay=true
+EOF
+kbuildsycoca6 2>/dev/null || update-desktop-database ~/.local/share/applications
+```
+
 ## Limitations
 
-- No kill switch; with it enabled in Settings the app refuses to connect.
-- DNS and IPv6 protection for full-tunnel profiles is configured through
-  NetworkManager. It was verified in a Debian 13 test VM, not on other
-  distributions. Runtime route/resolver checks distinguish Configured, Verified
-  and Failed; they do not replace packet-capture leak tests.
+- No kill switch; with it enabled in Settings the app refuses to connect. During
+  connect, disconnect, switching and reconnect, traffic can use your normal
+  connection.
+- Full-tunnel DNS protection needs systemd-resolved managing `/etc/resolv.conf`
+  (see above). Runtime route/resolver checks distinguish Configured, Verified and
+  Failed; they do not replace packet-capture leak tests.
 - Known NetworkManager issue: restarting NetworkManager while a full tunnel is
   up can leave a firewall rule behind that breaks later tunnels using the same
   address until reboot. Detection is planned (see docs/architecture/DECISIONS.md D11).
