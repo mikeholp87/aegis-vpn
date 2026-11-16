@@ -3,7 +3,7 @@
 ## Automated (every change)
 `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace`,
 `pnpm lint && pnpm typecheck && pnpm test`, cargo-deny, cargo audit,
-pnpm audit, gitleaks (CI).
+pnpm audit (CI). Run Gitleaks only when explicitly requested.
 
 ## Live Linux, non-disruptive (developer host)
 1. `sudo scripts/test-netns-peer.sh up` (or `pkexec <abs path> up` without a terminal; isolated namespace, split route 10.99.0.0/24)
