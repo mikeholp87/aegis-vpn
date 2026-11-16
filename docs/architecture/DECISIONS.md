@@ -56,3 +56,17 @@ requests, strict CSP.
 
 ### D10. Mock only on explicit request
 `AEGIS_BACKEND=mock`; never a silent fallback. Banner always visible.
+
+### D11. Leaked NetworkManager anti-spoofing rules: detect and warn, never remove (2026-11-16)
+Found in the VM suite: NetworkManager 1.52.1 (Debian 13) adds a raw-table rule
+per full tunnel (`ip daddr <tunnel addr> iifname != "<iface>" … drop`). If NM
+restarts while the tunnel is up, it re-adds the rule and on disconnect removes
+only one copy; the leftover silently drops replies for any later tunnel with
+the same address on another interface, while the app still sees encrypted
+data arriving ("server responded"). Reproduced with a plain
+`nmcli connection import` profile, so it is not Aegis-specific.
+*Decision (user, 2026-11-16):* Aegis will **detect** such leftovers and show a
+warning (reboot, or reload the firewall), and will **not remove** them, because
+they belong to NetworkManager. Reading the ruleset needs CAP_NET_ADMIN, so the
+check ships with the root helper (Phase E); there is no unprivileged
+equivalent. *Also:* report upstream after checking current NM releases.

@@ -1,0 +1,47 @@
+#cloud-config
+# cloud-init for the disposable Aegis VPN test VM (scripts/vm/run-vm-tests.sh).
+# @SSH_PUBKEY@ is replaced with a per-run key. Never use this config elsewhere:
+# it grants passwordless sudo and broad NetworkManager rights to the test user.
+users:
+  - name: aegis
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "@SSH_PUBKEY@"
+ssh_pwauth: false
+package_update: true
+packages:
+  - network-manager
+  - wireguard-tools
+  - systemd-resolved
+  - dnsmasq-base
+  - tcpdump
+  - nftables
+  - iputils-ping
+  - iproute2
+write_files:
+  - path: /etc/aegis-test-vm
+    content: "Disposable Aegis VPN test VM. vm_suite refuses to run without this file.\n"
+  - path: /etc/polkit-1/rules.d/50-aegis-test.rules
+    content: |
+      // TEST VM ONLY: give the SSH test user the NetworkManager rights an
+      // active local desktop user gets by default.
+      polkit.addRule(function (action, subject) {
+        if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 &&
+            subject.user === "aegis") {
+          return polkit.Result.YES;
+        }
+      });
+  - path: /etc/NetworkManager/conf.d/50-aegis-test.conf
+    content: |
+      [main]
+      dns=systemd-resolved
+      [keyfile]
+      # The test peer's veth is managed by the test script, not NetworkManager.
+      unmanaged-devices=interface-name:aegis-veth*
+runcmd:
+  # Diagnostics on the serial console (captured in console.log by the harness).
+  - [sh, -c, "ip -br addr; ip route; ip -6 route | head -5"]
+  - systemctl enable --now systemd-resolved
+  - systemctl restart NetworkManager

@@ -1,0 +1,9 @@
+# cloud-init network config for the test VM: DHCPv4 and IPv6 router
+# advertisements from QEMU user-mode networking, whatever the NIC is named.
+version: 2
+ethernets:
+  uplink:
+    match:
+      name: "e*"
+    dhcp4: true
+    accept-ra: true

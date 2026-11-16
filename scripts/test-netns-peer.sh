@@ -1,15 +1,25 @@
 #!/usr/bin/env bash
 # Isolated WireGuard test server for live Aegis VPN tests on Linux.
 #
-# Creates network namespace "aegis-peer" with a WireGuard server reachable from
-# the host over a private veth link. The generated client profile routes ONLY
-# 10.99.0.0/24 (split route), so host routing, DNS and other VPNs are untouched.
+# Creates network namespace "aegis-peer" with a WireGuard server reachable over
+# a private veth link, and writes a matching client profile.
 #
-#   sudo scripts/test-netns-peer.sh up     # prints the client profile path
+#   sudo scripts/test-netns-peer.sh up [split|full|full4]   # prints the profile path
 #   (or: pkexec "$PWD/scripts/test-netns-peer.sh" up  when no terminal is available)
-#   sudo scripts/test-netns-peer.sh down   # removes everything it created
+#   sudo scripts/test-netns-peer.sh down                    # removes everything it created
 #
-# Requires: iproute2, wireguard-tools (wg), kernel wireguard module.
+# Modes:
+#   split (default) routes only 10.99.0.0/24. Safe on a developer machine.
+#   full            routes 0.0.0.0/0 and ::/0, DNS 10.99.0.1.        VM ONLY.
+#   full4           routes 0.0.0.0/0 only (IPv6 deliberately leaks).  VM ONLY.
+# The full modes add "internet" sentinel addresses inside the namespace
+# (198.51.100.1, 2001:db8:99::1) and a DNS server on 10.99.0.1 that answers every
+# name with the sentinel, so leak tests can tell which resolver answered.
+# They refuse to run unless AEGIS_VM_TEST=1, because connecting a full-tunnel
+# profile takes over the default route.
+#
+# Requires: iproute2, wireguard-tools (wg), kernel wireguard module;
+# full modes also need dnsmasq (dnsmasq-base).
 set -euo pipefail
 
 NS=aegis-peer
@@ -17,8 +27,10 @@ HOST_IF=aegis-veth0
 NS_IF=aegis-veth1
 HOST_ADDR=10.200.0.1/30
 NS_ADDR=10.200.0.2/30
-SERVER_TUN=10.99.0.1/24
-CLIENT_TUN=10.99.0.2/32
+SERVER_TUN4=10.99.0.1/24
+SERVER_TUN6=fd99::1/64
+SENTINEL4=198.51.100.1
+SENTINEL6=2001:db8:99::1
 PORT=51820
 DIR=/run/aegis-test
 
@@ -28,8 +40,23 @@ die() {
 }
 
 up() {
+	local mode="${1:-split}"
 	[[ $EUID -eq 0 ]] || die "run as root (sudo or pkexec)"
+	case "$mode" in
+	split) ;;
+	full | full4)
+		[[ ${AEGIS_VM_TEST:-} == 1 ]] || die "mode '$mode' is for disposable VMs only (set AEGIS_VM_TEST=1)"
+		command -v dnsmasq >/dev/null || die "dnsmasq is required for mode '$mode'"
+		;;
+	*) die "unknown mode '$mode' (split|full|full4)" ;;
+	esac
 	command -v wg >/dev/null || die "wireguard-tools is not installed (apt install wireguard-tools)"
+	# A distinct client address per mode, so leftovers from one mode's run (for
+	# example NetworkManager's leaked anti-spoofing rules) cannot affect another.
+	local host
+	case "$mode" in split) host=2 ;; full) host=3 ;; full4) host=4 ;; esac
+	CLIENT_TUN4="10.99.0.$host/32"
+	CLIENT_TUN6="fd99::$host/128"
 	ip netns list | grep -qw "$NS" && die "namespace $NS already exists; run '$0 down' first"
 
 	install -d -m 0700 "$DIR"
@@ -50,9 +77,30 @@ up() {
 
 	ip -n "$NS" link add wg0 type wireguard
 	ip netns exec "$NS" wg set wg0 private-key "$DIR/server.key" listen-port "$PORT" \
-		peer "$(cat "$DIR/client.pub")" allowed-ips "${CLIENT_TUN}"
-	ip -n "$NS" addr add "$SERVER_TUN" dev wg0
+		peer "$(cat "$DIR/client.pub")" allowed-ips "${CLIENT_TUN4},${CLIENT_TUN6}"
+	ip -n "$NS" addr add "$SERVER_TUN4" dev wg0
+	ip -n "$NS" addr add "$SERVER_TUN6" dev wg0 nodad
 	ip -n "$NS" link set wg0 up
+
+	local address="$CLIENT_TUN4" allowed="10.99.0.0/24" dns=""
+	if [[ $mode != split ]]; then
+		# "Internet" endpoints that exist only behind the tunnel.
+		ip -n "$NS" link add sentinel type dummy
+		ip -n "$NS" addr add "$SENTINEL4/32" dev sentinel
+		ip -n "$NS" addr add "$SENTINEL6/128" dev sentinel nodad
+		ip -n "$NS" link set sentinel up
+		ip netns exec "$NS" dnsmasq --conf-file=/dev/null --no-resolv --no-hosts \
+			--listen-address="${SERVER_TUN4%/*}" --bind-interfaces \
+			--address="/#/$SENTINEL4" --address="/#/$SENTINEL6" \
+			--pid-file="$DIR/dnsmasq.pid"
+		dns="DNS = ${SERVER_TUN4%/*}"
+		if [[ $mode == full ]]; then
+			address="$CLIENT_TUN4, $CLIENT_TUN6"
+			allowed="0.0.0.0/0, ::/0"
+		else
+			allowed="0.0.0.0/0"
+		fi
+	fi
 
 	# Invoking user: sudo sets SUDO_USER, pkexec sets PKEXEC_UID.
 	local owner="${SUDO_USER:-}"
@@ -62,15 +110,16 @@ up() {
 	owner="${owner:-root}"
 	local conf="$DIR/aegis-netns-test.conf"
 	cat >"$conf" <<CONF
-# Throwaway profile for the isolated aegis-peer test namespace.
+# Throwaway profile ($mode) for the isolated aegis-peer test namespace.
 [Interface]
 PrivateKey = $(cat "$DIR/client.key")
-Address = ${CLIENT_TUN}
+Address = ${address}
+${dns}
 
 [Peer]
 PublicKey = $(cat "$DIR/server.pub")
 Endpoint = ${NS_ADDR%/*}:${PORT}
-AllowedIPs = 10.99.0.0/24
+AllowedIPs = ${allowed}
 PersistentKeepalive = 25
 CONF
 	chown "$owner" "$DIR" "$conf"
@@ -80,6 +129,10 @@ CONF
 
 down() {
 	[[ $EUID -eq 0 ]] || die "run as root (sudo or pkexec)"
+	# Processes are not killed when a namespace is deleted.
+	if [[ -f $DIR/dnsmasq.pid ]]; then
+		kill "$(cat "$DIR/dnsmasq.pid")" 2>/dev/null || true
+	fi
 	ip netns del "$NS" 2>/dev/null || true # also removes the veth pair
 	ip link del "$HOST_IF" 2>/dev/null || true
 	rm -rf "$DIR"
@@ -91,8 +144,8 @@ status() {
 }
 
 case "${1:-}" in
-up) up ;;
+up) up "${2:-split}" ;;
 down) down ;;
 status) status ;;
-*) die "usage: $0 up|down|status" ;;
+*) die "usage: $0 up [split|full|full4] | down | status" ;;
 esac

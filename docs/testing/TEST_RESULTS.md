@@ -2,6 +2,17 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-16 — VM harness pre-push checks
+
+- `shellcheck scripts/test-netns-peer.sh scripts/vm/run-vm-tests.sh`: pass.
+- `shfmt -d scripts/test-netns-peer.sh scripts/vm/run-vm-tests.sh`: pass.
+- `cargo fmt --all --check`: pass.
+- `cargo test -p aegis-linux`: 8 tests passed.
+- `cargo clippy -p aegis-linux --all-targets -- -D warnings`: pass.
+
+Not run in this check: the disruptive VM suite. These checks do not establish
+full-tunnel, DNS/IPv6 leak, reconnect or NetworkManager-restart results.
+
 ## 2026-11-16 — LIVE edit + export through NetworkManager
 
 Same host and isolated netns peer as the split-route run below (peer re-created

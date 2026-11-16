@@ -32,8 +32,10 @@ Legend: [x] done and verified · [~] implemented, not fully verified · [ ] not 
 
 ## Phase E: security
 - [ ] `aegis-helper` (Polkit, SO_PEERCRED) with nftables `inet aegis_vpn` kill switch
+- [ ] Helper: detect leaked NetworkManager anti-spoofing rules for the active tunnel address and warn in Diagnostics/Dashboard; never remove them (DECISIONS D11)
+- [ ] Report the NM rule leak upstream (check whether NM ≥1.52.2 / 1.58 still has it)
 - [ ] DNS/IPv6 leak verification (VM)
-- [ ] QEMU VM harness (`scripts/vm/`) for full-tunnel and kill-switch tests
+- [~] QEMU VM harness (`scripts/vm/`) for full-tunnel, leak, reconnect and NM-restart tests (see TEST_RESULTS for runs)
 
 ## Phase F: distribution
 - [~] Tauri bundle config for deb/rpm/nsis; never built

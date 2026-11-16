@@ -38,6 +38,7 @@ cargo test --workspace
 cd apps/desktop && pnpm install && pnpm lint && pnpm typecheck && pnpm test
 AEGIS_BACKEND=mock pnpm tauri dev           # UI with the simulated backend
 cargo run -p aegis-linux --example nm_probe  # read-only check against NetworkManager
+scripts/vm/run-vm-tests.sh                   # full-tunnel/leak suite in a disposable QEMU VM (no root)
 ```
 
 `cargo clippy` for the desktop crate needs `apps/desktop/dist/` to exist
@@ -70,7 +71,9 @@ cargo run -p aegis-linux --example nm_probe  # read-only check against NetworkMa
 8. **Never claim untested results.** Update `TEST_RESULTS.md` with what you
    actually ran, including failures. A build is not a live test.
 9. **Disruptive network tests only in isolation**: the netns peer (split
-   route) on a dev host, full-tunnel and kill-switch tests only in a VM.
+   route) on a dev host, full-tunnel and kill-switch tests only in the VM
+   (`scripts/vm/`). `vm_suite` refuses to run without `/etc/aegis-test-vm`
+   and the peer script refuses full modes without `AEGIS_VM_TEST=1`.
 10. Tauri app commands are listed in `src-tauri/build.rs` and each needs an
     `allow-*` entry in `capabilities/default.json`. Do not add the shell,
     fs, http or dialog JS permissions.

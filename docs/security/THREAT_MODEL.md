@@ -19,6 +19,7 @@ integrity of system network configuration.
 | Stale routes/interfaces | NM owns and removes them; engine rolls back failed activation; recovery removes orphan profiles | Implemented; live test pending |
 | Touching other VPNs/connections | Ownership check (uuid + type + `aegis-` iface) before any change | Done, tested (unit) |
 | Dependency compromise | Pinned versions, lockfiles, cargo-deny/audit + pnpm audit in CI, actions pinned by SHA | CI written, not run (no remote) |
+| Leaked NM anti-spoofing rules after NM restart (DECISIONS D11) | Detect and warn via helper; never removed by Aegis | Found in VM; detection planned with helper |
 | Unsafe updates | Updater disabled until signing + rollback tested | By design |
 
 Known dependency warnings: see `docs/testing/TEST_RESULTS.md` (zbus 5 crates
