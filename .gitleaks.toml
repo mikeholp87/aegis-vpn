@@ -1,0 +1,14 @@
+# Extend the default rules; allow only the throwaway test keys used in
+# fixtures and unit tests (RFC 7748 section 6.1 vector and random test keys).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public test vectors and throwaway fixture keys"
+regexes = [
+  '''dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=''',
+  '''hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=''',
+  '''3p7bfXt9wbTTW2HC7OQ1Nz\+DQ8hbeGdNrfx\+FG\+IK08=''',
+  '''MFujEGz6ut24WLYNi1ay\+2fdQM2dc66lyn8CjB3arsM=''',
+  '''n\+zNzYcAkAVT9bZVmnHrIIfSeHGn8WVc1UJ4Q/82BzE=''',
+]
