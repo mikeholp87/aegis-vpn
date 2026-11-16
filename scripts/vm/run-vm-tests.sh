@@ -109,7 +109,7 @@ scp -q -i "$RUN/id" -P "$SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHosts
 	-o LogLevel=ERROR "$SUITE" "$ROOT/scripts/test-netns-peer.sh" aegis@127.0.0.1:
 "${SSH[@]}" chmod +x vm_suite test-netns-peer.sh
 # shellcheck disable=SC2016 # expands on the VM, not here
-"${SSH[@]}" 'echo "VM: $(. /etc/os-release; echo $PRETTY_NAME), kernel $(uname -r), $(NetworkManager --version | sed "s/^/NetworkManager /"), $(systemctl --version | head -1)"'
+"${SSH[@]}" 'echo "VM: $(. /etc/os-release; echo $PRETTY_NAME), kernel $(uname -r), NetworkManager $(/usr/sbin/NetworkManager --version), $(systemctl --version | head -1)"'
 
 status=0
 for mode in "${MODES[@]}"; do
