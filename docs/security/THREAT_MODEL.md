@@ -10,7 +10,7 @@ integrity of system network configuration.
 | Compromised webview content | No keys or paths cross IPC; per-command allow-list; CSP; no shell/fs/http plugins; exports need native dialog | Done; CSP/permissions not penetration-tested |
 | Path traversal on import/export | Paths only from native dialogs / OS drop events; import requires regular file | Done |
 | Key exposure in logs/diagnostics/crash output | `SecretKey` redacted Debug, no Display/Serialize; tests scan UI payloads and bundle | Done, tested |
-| Other local users | NM `permissions=user:<me>`; app files 0600 in 0700 dir; NM keyfile root 0600 | Done; live check pending |
+| Other local users | NM `permissions=user:<me>`; app files 0600 in 0700 dir; NM keyfile root 0600 | Done; keyfile unreadable verified live. Residual: on Debian the keyfile directory is 0755, so connection names ("Aegis: <profile name>") are visible to other local users |
 | Untrusted IPC clients / helper impersonation | No helper yet. Planned: SO_PEERCRED + Polkit check (Linux), pipe DACL + SID check (Windows) | Planned |
 | DLL search-path attacks (Windows) | Planned: load tunnel.dll by absolute path from install dir, `SetDefaultDllDirectories` | Planned |
 | DNS leaks | Full tunnel: NM exclusive DNS (priority -50, `~.`); reported as Configured, not Verified | Configured, unverified |

@@ -2,6 +2,33 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-16 — LIVE edit + export through NetworkManager
+
+Same host and isolated netns peer as the split-route run below (peer re-created
+with fresh keys). Test: `target/debug/examples/nm_edit_live
+/run/aegis-test/aegis-netns-test.conf`, unprivileged user.
+
+| Step | Result |
+|---|---|
+| Editor draft loads (NM `GetSecrets`) | PASS |
+| Draft shows correct derived public key | PASS |
+| Draft JSON (UI payload) contains no private key | PASS (384 B) |
+| Update: rename, MTU 1380, keepalive 15, add search domain (NM `Update2`) | PASS |
+| Reloaded config has the edits and the original private/peer keys | PASS |
+| Connect edited profile | PASS |
+| Kernel interface `aegis-43bc7148` MTU is 1380 | PASS |
+| Ping 10.99.0.1 through edited tunnel; server response confirmed | PASS |
+| Export; file mode 0600; parses equal to edited config | PASS |
+| Aegis NM keyfile exists and is not readable by the user | PASS |
+| Delete; no leftover NM connection or interface | PASS |
+
+First attempt had 1 FAIL: the test asserted the keyfile **directory** was not
+listable, but Debian's `network-manager` package ships
+`/etc/NetworkManager/system-connections` as 0755 (files 0600). That was a wrong
+assertion, not a leak: no keyfile was readable. The test now checks the
+real property (our keyfile unreadable). Consequence recorded in the threat
+model: other local users can see profile *names* via the directory listing.
+
 ## 2026-11-16 — LIVE split-route tunnel through NetworkManager (first real tunnel)
 
 Host: Debian forky/sid, KDE Plasma Wayland, kernel 7.2.15, NetworkManager 1.58.1,

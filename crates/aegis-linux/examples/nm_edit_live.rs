@@ -177,15 +177,36 @@ async fn main() {
         String::new(),
     );
 
-    // 5. Secrets are not readable by unprivileged users on disk.
-    let nm_dir = std::fs::read_dir("/etc/NetworkManager/system-connections");
-    step(
-        "NM keyfile directory not listable by this user",
-        nm_dir
-            .as_ref()
-            .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied),
-        format!("{:?}", nm_dir.as_ref().err().map(|e| e.kind())),
-    );
+    // 5. Our NM keyfile exists and its contents (keys) are not readable by
+    //    this user. Distros differ on whether the directory itself is listable
+    //    (Debian ships it 0755), which exposes connection names only.
+    let dir = "/etc/NetworkManager/system-connections";
+    match std::fs::read_dir(dir) {
+        Ok(entries) => {
+            let ours: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with("Aegis"))
+                })
+                .collect();
+            let unreadable = ours.iter().all(|p| {
+                std::fs::File::open(p)
+                    .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied)
+            });
+            step(
+                "Aegis keyfile exists and is not readable by this user",
+                !ours.is_empty() && unreadable,
+                format!("{} file(s)", ours.len()),
+            );
+        }
+        Err(e) => step(
+            "Aegis keyfile not readable by this user (directory not listable)",
+            e.kind() == std::io::ErrorKind::PermissionDenied,
+            format!("{:?}", e.kind()),
+        ),
+    }
 
     // 6. Clean up.
     let r = engine.delete(id).await;
