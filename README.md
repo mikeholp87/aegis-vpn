@@ -3,8 +3,10 @@
 A lightweight, open-source WireGuard® client for Linux and Windows 11, built with
 Rust, Tauri 2 and React. Working name.
 
-> **Status: pre-alpha.** The Linux NetworkManager backend has passed a live
-> split-route tunnel test; full-tunnel and leak tests have not been run. The Windows backend is not implemented.
+> **Status: pre-alpha.** The Linux NetworkManager backend has passed live
+> split-route tests on a desktop and full-tunnel, DNS-leak, IPv6, reconnect and
+> NetworkManager-restart tests in a Debian 13 VM. Kill switch and Windows are
+> not implemented. The Windows backend is not implemented.
 > There is no kill switch yet. Do not rely on this for protection. See
 > [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/testing/TEST_RESULTS.md](docs/testing/TEST_RESULTS.md).
 
@@ -43,7 +45,12 @@ AEGIS_BACKEND=mock pnpm tauri dev
 
 - No kill switch; with it enabled in Settings the app refuses to connect.
 - DNS and IPv6 protection for full-tunnel profiles is configured through
-  NetworkManager but not independently verified.
+  NetworkManager. It was verified in a Debian 13 test VM, not on other
+  distributions, and the app does not re-verify it on your machine at runtime
+  (so it reports "Configured", not "Verified").
+- Known NetworkManager issue: restarting NetworkManager while a full tunnel is
+  up can leave a firewall rule behind that breaks later tunnels using the same
+  address until reboot. Detection is planned (see docs/architecture/DECISIONS.md D11).
 - Handshake times are not readable without root on Linux; the app infers a
   server response from received data.
 - Not independently security-audited.

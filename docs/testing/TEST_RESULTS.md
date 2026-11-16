@@ -2,6 +2,57 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-16 — VM suite (`scripts/vm/run-vm-tests.sh`): full tunnel, leaks, recovery
+
+Host: QEMU 11.1.2 + KVM, user-mode networking, unprivileged. Guest: Debian 13
+(trixie) genericcloud, SHA512-verified image, kernel 6.12.116, systemd 257,
+NetworkManager 1.52.1, systemd-resolved. Peer: `test-netns-peer.sh` modes
+`full` (0.0.0.0/0 + ::/0) and `full4` (0.0.0.0/0 only) inside the VM.
+
+**Final run (run 7): 89 PASS, 0 FAIL, harness exit 0.** Per mode:
+
+| Check | full | full4 |
+|---|---|---|
+| nftables snapshot works; DNS capture positive control (4 packets on uplink before connect) | PASS | PASS |
+| Connect; server response confirmed | PASS | PASS |
+| IPv4 internet route via tunnel; endpoint route outside tunnel | PASS | PASS |
+| Ping IPv4 sentinel that exists only behind the tunnel | PASS | PASS |
+| IPv6 route via tunnel + IPv6 sentinel ping | PASS | n/a |
+| IPv6 bypasses IPv4-only tunnel; app reports IPv6 protection **Failed** | n/a | PASS |
+| DNS protection reported Configured | PASS | PASS |
+| resolvectl and libc lookups answered by tunnel DNS; **0 DNS packets on uplink** | PASS | PASS |
+| External `nmcli connection down` → engine reconnects and re-confirms | PASS | PASS |
+| Disconnect: IPv4/IPv6 rules, routes, resolved DNS/domains and nftables identical to baseline | PASS | PASS |
+| 3× (connect, restart NetworkManager, re-confirm, routed via tunnel, ping) | PASS | PASS |
+| After restart cycles: nothing left behind | XPASS (leak not reproduced) | XPASS |
+| Delete; no leftover NM connection; peer down | PASS | PASS |
+
+### Finding: NetworkManager leaks its WireGuard anti-spoofing rule (DECISIONS D11)
+Run 4 failed IPv4-only checks because NetworkManager 1.52.1 left raw-table
+rules `ip daddr 10.99.0.2 iifname != "aegis-<old>" … drop` from earlier tunnels,
+silently dropping replies for later tunnels with the same address (while
+encrypted data still arrived, so "server responded" was true). Each leaked
+interface belonged to a cycle where NetworkManager was restarted while the
+tunnel was up. Reproduced without Aegis using `nmcli connection import`:
+normal up/down → 0 rules left; up, NM restart, down → 1 rule left.
+Frequency: leaked 5 of 5 times in run 4, its 2 reruns and the manual test; 0 of
+10 restart cycles in runs 5–7. Unverified hypothesis: it happens when the
+restart comes within ~1–2 s of activation. Decision: detect and warn via the
+future helper; never remove.
+
+### Harness bugs found and fixed while getting here (no product impact)
+- Runs 1–3: VM had no IPv4. Cause: `-netdev user,ipv6=on` without `ipv4=on`
+  disables IPv4 (QEMU: naming one protocol disables the other). Also moved the
+  cloud-init seed from an HTTP server to a CIDATA ISO.
+- Run 4: snapshot comparison did not include nftables (could not see the leak)
+  and included self-changing values (RA lifetimes, counters, nexthop ids).
+- Run 5: baseline taken before the peer veth finished IPv6 DAD.
+- Modes now use distinct client addresses (10.99.0.3 / .4) so one mode's
+  leftovers cannot affect the next.
+
+Not covered: kill switch (not implemented), suspend/resume, reboot with tunnel
+active, uplink/Wi-Fi changes, desktop UI driving the connection, other distros.
+
 ## 2026-11-16 — VM harness pre-push checks
 
 - `shellcheck scripts/test-netns-peer.sh scripts/vm/run-vm-tests.sh`: pass.

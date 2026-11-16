@@ -13,8 +13,8 @@ integrity of system network configuration.
 | Other local users | NM `permissions=user:<me>`; app files 0600 in 0700 dir; NM keyfile root 0600 | Done; keyfile unreadable verified live. Residual: on Debian the keyfile directory is 0755, so connection names ("Aegis: <profile name>") are visible to other local users |
 | Untrusted IPC clients / helper impersonation | No helper yet. Planned: SO_PEERCRED + Polkit check (Linux), pipe DACL + SID check (Windows) | Planned |
 | DLL search-path attacks (Windows) | Planned: load tunnel.dll by absolute path from install dir, `SetDefaultDllDirectories` | Planned |
-| DNS leaks | Full tunnel: NM exclusive DNS (priority -50, `~.`); reported as Configured, not Verified | Configured, unverified |
-| IPv6 leaks | Full tunnel routes ::/0; IPv4-only full tunnels reported as Failed for IPv6 | Configured, unverified |
+| DNS leaks | Full tunnel: NM exclusive DNS (priority -50, `~.`); reported as Configured | Verified in VM (Debian 13): tunnel DNS answers, 0 packets on uplink, with positive control |
+| IPv6 leaks | Full tunnel routes ::/0; IPv4-only full tunnels reported as Failed for IPv6 | Verified in VM (Debian 13): ::/0 via tunnel; IPv4-only correctly reported as leaking |
 | Traffic outside tunnel during failures | No kill switch yet; requesting it blocks connecting (fail closed) | Partial |
 | Stale routes/interfaces | NM owns and removes them; engine rolls back failed activation; recovery removes orphan profiles | Implemented; live test pending |
 | Touching other VPNs/connections | Ownership check (uuid + type + `aegis-` iface) before any change | Done, tested (unit) |

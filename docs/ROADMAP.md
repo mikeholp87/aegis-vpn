@@ -35,7 +35,8 @@ Legend: [x] done and verified · [~] implemented, not fully verified · [ ] not 
 - [ ] Helper: detect leaked NetworkManager anti-spoofing rules for the active tunnel address and warn in Diagnostics/Dashboard; never remove them (DECISIONS D11)
 - [ ] Report the NM rule leak upstream (check whether NM ≥1.52.2 / 1.58 still has it)
 - [ ] DNS/IPv6 leak verification (VM)
-- [~] QEMU VM harness (`scripts/vm/`) for full-tunnel, leak, reconnect and NM-restart tests (see TEST_RESULTS for runs)
+- [x] QEMU VM harness (`scripts/vm/`): full-tunnel, DNS/IPv6 leak, reconnect, NM-restart and restore checks; **89/89 pass** on Debian 13 (2026-11-16)
+- [ ] Extend VM suite: suspend/resume, reboot with tunnel up, uplink change; Ubuntu and Fedora images
 
 ## Phase F: distribution
 - [~] Tauri bundle config for deb/rpm/nsis; never built
