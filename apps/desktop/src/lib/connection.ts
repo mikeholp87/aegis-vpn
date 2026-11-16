@@ -11,6 +11,7 @@ export function stateTone(s?: ConnectionState): Tone {
     case "disconnecting":
       return "pending";
     case "failed":
+    case "uncertain":
       return "bad";
     default:
       return "none";
@@ -37,6 +38,8 @@ export function stateHeadline(s: ConnectionState, name?: string): string {
       return "Disconnecting";
     case "failed":
       return "Connection failed";
+    case "uncertain":
+      return "Tunnel status unknown";
   }
 }
 

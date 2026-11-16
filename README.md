@@ -18,9 +18,19 @@ Rust, Tauri 2 and React. Working name.
 - Connects through NetworkManager on Linux; tunnels keep running when the app closes
 - Shows what is actually confirmed: tunnel up, server responded, protection
   configured or not, instead of a single "secure" badge
+- Locations directory for your own servers: country/city metadata, search, favorites,
+  recent successful connections, Quick Connect and switching through the same engine
 - Automatic reconnect with bounded backoff, diagnostics, sanitized export
 - Light and dark themes, keyboard navigation, tray menu
-- No account, no telemetry, no network requests of its own
+- No account or telemetry; optional connectivity checks have a Settings disclosure
+
+## Add your first VPN location
+
+Open **Locations → Add server → Import WireGuard Configuration**, import a client
+`.conf` already registered on your server, assign its country/city, and save.
+Select the country and **Connect**. Wait for the server response; a tunnel being
+up alone is insufficient. See [Locations setup and limitations](docs/features/LOCATIONS.md).
+Switching currently has no kill-switch protection. Windows tunneling is pending.
 
 ## Supported platforms
 
@@ -46,8 +56,8 @@ AEGIS_BACKEND=mock pnpm tauri dev
 - No kill switch; with it enabled in Settings the app refuses to connect.
 - DNS and IPv6 protection for full-tunnel profiles is configured through
   NetworkManager. It was verified in a Debian 13 test VM, not on other
-  distributions, and the app does not re-verify it on your machine at runtime
-  (so it reports "Configured", not "Verified").
+  distributions. Runtime route/resolver checks distinguish Configured, Verified
+  and Failed; they do not replace packet-capture leak tests.
 - Known NetworkManager issue: restarting NetworkManager while a full tunnel is
   up can leave a firewall rule behind that breaks later tunnels using the same
   address until reboot. Detection is planned (see docs/architecture/DECISIONS.md D11).

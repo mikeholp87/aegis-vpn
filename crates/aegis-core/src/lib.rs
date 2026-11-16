@@ -9,6 +9,7 @@ pub mod draft;
 pub mod engine;
 pub mod error;
 pub mod mock;
+pub mod registry;
 pub mod retry;
 pub mod store;
 pub mod types;

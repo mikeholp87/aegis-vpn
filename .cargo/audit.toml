@@ -1,0 +1,4 @@
+[advisories]
+# Version-based advisory still matches the fixed, pinned 0.18.5 backport.
+# Reviewed 2026-11-16; revisit on every Tauri update. See docs/security/GLIB_BACKPORT.md.
+ignore = ["RUSTSEC-2024-0429"]

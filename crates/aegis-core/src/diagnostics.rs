@@ -187,12 +187,22 @@ pub(crate) async fn run<B: VpnBackend>(e: &Engine<B>) -> Vec<Check> {
         };
         out.push(check(id, title, st, d));
     }
-    out.push(check(
-        "reachability",
-        "Internet reachability",
-        Skipped,
-        "not tested: Aegis makes no external requests unless you enable a check",
-    ));
+    let (st, d) = match &snap.reachability {
+        Feature::Off => (Skipped, "not tested (not connected)".to_string()),
+        Feature::Unsupported(m) => (Skipped, format!("not tested: {m}")),
+        Feature::Configured(m) => (Warn, m.clone()),
+        Feature::Verified(m) => (Pass, m.clone()),
+        Feature::Failed(m) => (Fail, m.clone()),
+    };
+    out.push(check("reachability", "Internet reachability", st, d));
+    let (st, d) = match &snap.public_ip {
+        Feature::Off => (Skipped, "not tested".to_string()),
+        Feature::Unsupported(m) => (Skipped, format!("not tested: {m}")),
+        Feature::Configured(m) => (Warn, m.clone()),
+        Feature::Verified(m) => (Pass, format!("egress IPv4 {m}")),
+        Feature::Failed(m) => (Fail, m.clone()),
+    };
+    out.push(check("public_ip", "Public IP", st, d));
     out
 }
 

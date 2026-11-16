@@ -29,6 +29,7 @@ fn status_text(s: &ConnectionState) -> &'static str {
         ConnectionState::Reconnecting { .. } => "Reconnecting…",
         ConnectionState::Disconnecting { .. } => "Disconnecting…",
         ConnectionState::Failed { .. } => "Connection failed",
+        ConnectionState::Uncertain { .. } => "Tunnel status unknown; may still be active",
     }
 }
 
@@ -55,6 +56,9 @@ fn build_menu(app: &AppHandle, engine: &Engine<AnyBackend>) -> tauri::Result<Men
     )?;
     let disconnect = MenuItem::with_id(app, "disconnect", "Disconnect", !idle, None::<&str>)?;
 
+    // Prefer-profile changes take the engine op lock; disable while a
+    // connect/disconnect/uncertain session is in progress so Busy is not a
+    // silent no-op on the tray.
     let items: Vec<CheckMenuItem<Wry>> = profiles
         .iter()
         .map(|p| {
@@ -62,7 +66,7 @@ fn build_menu(app: &AppHandle, engine: &Engine<AnyBackend>) -> tauri::Result<Men
                 app,
                 format!("pref:{}", p.meta.id),
                 &p.meta.name,
-                true,
+                idle,
                 p.preferred,
                 None::<&str>,
             )
@@ -73,7 +77,7 @@ fn build_menu(app: &AppHandle, engine: &Engine<AnyBackend>) -> tauri::Result<Men
         app,
         "preferred",
         "Preferred profile",
-        !profiles.is_empty(),
+        idle && !profiles.is_empty(),
         &refs,
     )?;
 
@@ -137,7 +141,10 @@ pub fn create(app: &AppHandle, engine: &Arc<Engine<AnyBackend>>) -> tauri::Resul
                     } else {
                         Some(pid)
                     };
-                    let _ = engine.set_settings(s);
+                    if let Err(e) = engine.set_settings(s) {
+                        crate::show_main(app);
+                        let _ = app.emit("settings-error", e.to_string());
+                    }
                     refresh(app, &engine);
                 }
             }

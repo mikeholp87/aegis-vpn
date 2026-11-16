@@ -28,9 +28,11 @@ export function ActivityScreen() {
   const shown = filter === "all" ? events : events.filter((e) => e.level !== "info");
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-7">
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Activity and diagnostics</h1>
+        <h1 className="text-[28px] leading-tight font-semibold tracking-[-0.015em]">
+          Activity and diagnostics
+        </h1>
         <div className="flex gap-2">
           <Button onClick={refresh}>Run checks</Button>
           <Button onClick={() => run(api.exportDiagnostics)}>Export diagnostics</Button>
@@ -88,7 +90,7 @@ export function ActivityScreen() {
                 key={`${e.at_ms}-${i}`}
                 className="flex gap-3 border-b border-line py-1.5 text-[13px] last:border-b-0"
               >
-                <time className="w-20 shrink-0 text-muted">{clock(e.at_ms)}</time>
+                <time className="w-20 shrink-0 font-mono text-[12.5px] text-muted">{clock(e.at_ms)}</time>
                 <span
                   className={e.level === "error" ? "text-danger" : e.level === "warn" ? "text-pending" : ""}
                 >

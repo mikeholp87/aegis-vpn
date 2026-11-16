@@ -44,3 +44,19 @@ Legend: [x] done and verified · [~] implemented, not fully verified · [ ] not 
 
 ## Later (v1.1+)
 Per-app split tunnelling, advanced DNS, profile groups, backups, provisioning.
+
+## Locations (2026-11-16)
+- [x] Secret-free server metadata on existing ProfileId, ISO catalog, additive store defaults
+- [x] Locations navigation, country/server selection, search, favorites/recent/available filters
+- [x] Import assignment, existing-profile assignment and manual generated-key registration gate
+- [x] Country favorites, preferred country/profile, documented Quick Connect eligibility/ranking
+- [x] Dashboard synchronization, response-age expiry, unknown RTT, cancellation regression tests
+- [~] Real Linux switching reuses NM, with destination preflight, ID/link confirmation and cleanup;
+  unit/interface checks pass, extended VM switching test not run here (no /dev/kvm)
+- [~] Isolated Linux VPN CI workflow added; manually triggered, not executed this session
+- [ ] Windows privileged service and real Windows integration acceptance
+- [ ] Continuous kill switch/protected switching, suspend/resume/reboot/uplink-change matrix
+- [ ] Supported RTT sampler, public multi-country controlled-server matrix, independent security audit
+
+See `docs/features/LOCATIONS.md`; the full cross-platform acceptance criteria
+remain incomplete until those platform/protection checks exist and pass.

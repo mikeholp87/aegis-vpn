@@ -39,6 +39,13 @@ getrandom = "0.4"
 proptest = "1.12"
 zbus = { version = "6.3", default-features = false, features = ["tokio", "proxy"] }
 
+# Two-line VariantStrIter fix on the 0.18-compatible backport (unmerged upstream PR #2009).
+[patch.crates-io]
+glib = { git = "https://github.com/gtk-rs/gtk-rs-core", rev = "ea720152f28e293ef4362ee844ee5cc499f32d2a" }
+glib-sys = { git = "https://github.com/gtk-rs/gtk-rs-core", rev = "ea720152f28e293ef4362ee844ee5cc499f32d2a" }
+gobject-sys = { git = "https://github.com/gtk-rs/gtk-rs-core", rev = "ea720152f28e293ef4362ee844ee5cc499f32d2a" }
+gio-sys = { git = "https://github.com/gtk-rs/gtk-rs-core", rev = "ea720152f28e293ef4362ee844ee5cc499f32d2a" }
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 

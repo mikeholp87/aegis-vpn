@@ -7,6 +7,7 @@ use std::sync::Arc;
 use aegis_config::Issue;
 use aegis_core::diagnostics::Check;
 use aegis_core::draft::ProfileDraft;
+use aegis_core::registry::{self, Country, QuickConnectChoice, ServerHealth, ServerUpdate};
 use aegis_core::{
     Capabilities, CoreError, Engine, LogEntry, ProfileId, ProfileView, Settings, Snapshot,
 };
@@ -119,6 +120,35 @@ pub fn profiles(st: State<'_, AppState>) -> Vec<ProfileView> {
 }
 
 #[tauri::command]
+pub fn country_catalog() -> Vec<Country> {
+    registry::countries().to_vec()
+}
+
+#[tauri::command]
+pub async fn update_server(
+    st: State<'_, AppState>,
+    id: ProfileId,
+    update: ServerUpdate,
+) -> R<ProfileView> {
+    Ok(st.engine.update_server(id, update).await?)
+}
+
+#[tauri::command]
+pub fn server_health(st: State<'_, AppState>) -> Vec<ServerHealth> {
+    st.engine.server_health()
+}
+
+#[tauri::command]
+pub async fn refresh_server_health(st: State<'_, AppState>) -> R<Vec<ServerHealth>> {
+    Ok(st.engine.refresh_server_health().await?)
+}
+
+#[tauri::command]
+pub async fn quick_connect(st: State<'_, AppState>) -> R<QuickConnectChoice> {
+    Ok(st.engine.quick_connect().await?)
+}
+
+#[tauri::command]
 pub fn settings(st: State<'_, AppState>) -> Settings {
     st.engine.settings()
 }
@@ -126,6 +156,7 @@ pub fn settings(st: State<'_, AppState>) -> Settings {
 #[tauri::command]
 pub fn set_settings(app: AppHandle, st: State<'_, AppState>, settings: Settings) -> R<Settings> {
     let before = st.engine.settings();
+    let settings = st.engine.set_settings(settings)?;
     if settings.launch_on_login != before.launch_on_login {
         let al = app.autolaunch();
         let r = if settings.launch_on_login {
@@ -133,9 +164,14 @@ pub fn set_settings(app: AppHandle, st: State<'_, AppState>, settings: Settings)
         } else {
             al.disable()
         };
-        r.map_err(|e| UiError::msg(format!("could not change start-at-login: {e}")))?;
+        if let Err(e) = r {
+            st.engine.set_settings(before)?;
+            return Err(UiError::msg(format!(
+                "could not change start-at-login: {e}"
+            )));
+        }
     }
-    Ok(st.engine.set_settings(settings)?)
+    Ok(settings)
 }
 
 #[tauri::command]

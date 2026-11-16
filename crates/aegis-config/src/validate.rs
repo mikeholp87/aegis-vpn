@@ -14,6 +14,27 @@ pub fn validate(cfg: &WgConfig) -> Vec<Issue> {
     if i.addresses.is_empty() {
         e("Address", "at least one tunnel address is required".into());
     }
+    let kind = cfg.route_kind();
+    for (full, v6) in [
+        (
+            matches!(kind, RouteKind::Full | RouteKind::FullIpv4Only),
+            false,
+        ),
+        (
+            matches!(kind, RouteKind::Full | RouteKind::FullIpv6Only),
+            true,
+        ),
+    ] {
+        if full && !i.addresses.iter().any(|a| a.addr().is_ipv6() == v6) {
+            e(
+                "Address",
+                format!(
+                    "an IPv{} tunnel address is required for its default route",
+                    if v6 { 6 } else { 4 }
+                ),
+            );
+        }
+    }
     if let Some(m) = i.mtu {
         let has_v6 = i.addresses.iter().any(|a| matches!(a, IpNet::V6(_)));
         let min = if has_v6 { 1280 } else { 576 };
@@ -23,6 +44,17 @@ pub fn validate(cfg: &WgConfig) -> Vec<Issue> {
     }
     if i.dns_search.iter().any(|d| !crate::parse::is_hostname(d)) {
         e("DNS", "contains an invalid search domain".into());
+    }
+    if i.dns.iter().any(|d| {
+        !i.addresses
+            .iter()
+            .any(|a| a.addr().is_ipv6() == d.is_ipv6())
+    }) {
+        e(
+            "DNS",
+            "a DNS server's address family has no tunnel address; that server cannot be configured"
+                .into(),
+        );
     }
     if cfg.peers.is_empty() {
         e("Peer", "at least one [Peer] is required".into());

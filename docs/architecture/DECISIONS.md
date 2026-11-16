@@ -50,9 +50,11 @@ tray. *Revisit:* bump it when it moves to zbus 6.
 Storage and diagnostics live in `aegis-core`; IPC crate deferred until the
 helper/service exist. Split again when a module grows or gets a second user.
 
-### D9. System UI font
-No bundled or remote fonts: native look on KDE/GNOME/Windows, zero network
-requests, strict CSP.
+### D9. Bundled UI font (revised 2026-11-16)
+Atkinson Hyperlegible Next and Mono (OFL-1.1, via Fontsource) are bundled into
+the app, chosen because they disambiguate 0/O and 1/l/I in keys, addresses and
+endpoints. Still zero network requests; CSP `font-src 'self'` unchanged.
+Previously: system UI font only.
 
 ### D10. Mock only on explicit request
 `AEGIS_BACKEND=mock`; never a silent fallback. Banner always visible.
@@ -70,3 +72,50 @@ warning (reboot, or reload the firewall), and will **not remove** them, because
 they belong to NetworkManager. Reading the ruleset needs CAP_NET_ADMIN, so the
 check ships with the root helper (Phase E); there is no unprivileged
 equivalent. *Also:* report upstream after checking current NM releases.
+
+### D12. DNS and IPv6 protection: block, then verify at runtime (2026-11-16)
+*IPv6:* an IPv4 full tunnel that does not carry IPv6 gets an NM-owned
+`unreachable ::/0` route (metric 1, `ipv6.method=manual` without addresses;
+tested on NM 1.52) instead of leaking. NM removes it on disconnect, so no
+firewall or root is needed. Connections installed before this are refreshed
+on activation (`settings::lacks_ipv6_block`).
+*Verification:* while connected, every status poll runs unprivileged checks
+(`aegis-linux/src/verify.rs`): a UDP `connect()` route lookup (no packets
+sent) must pick a tunnel source address or fail with no route; DNS servers
+must route through the tunnel, and systemd-resolved's `Domains` must give the
+`~.` catch-all to the tunnel link only (or `/etc/resolv.conf` must list only
+tunnel servers). Pass ⇒ `Verified`, otherwise `Failed`. This checks routing
+and resolver state, not packets on the wire; the VM suite does that.
+*Not covered:* traffic during reconnects or tunnel failure (needs the kill
+switch), IPv4 on IPv6-only full tunnels, local-network names (for example
+`*.lan`) that resolved deliberately sends to that network's DNS.
+
+
+### D13. Internet reachability: one DNS lookup through the tunnel (user, 2026-11-16)
+While connected, Aegis asks the profile's own DNS server, reached through the
+tunnel, to resolve `example.com` (RFC 2606) when the tunnel comes up and
+then once a minute. NOERROR/NXDOMAIN ⇒ `Verified` ("tunnel DNS answered"),
+other DNS errors or no reply within 3 s ⇒ `Failed`. It is skipped
+(`Unsupported`) if no profile DNS server routes through the tunnel, so the
+check never sends anything outside it and contacts no new party. *Limit:* a
+resolver cache may answer, so it proves the far end's resolver works, not
+that arbitrary internet hosts are reachable. Chosen over an opt-in TCP check
+to a user host, which would contact a third party.
+
+### D14. Locations are metadata on existing profiles (2026-11-16)
+One ProfileId represents one server entry, including multi-peer configurations.
+`ProfileMeta.server` stores additive serde-default location/preferences/history;
+endpoints, AllowedIPs, credentials and connection lifecycle remain in their
+existing owners. Alternatives: separate registry crate/database and independent
+server IDs would duplicate joins and recovery state without another consumer.
+Countries use a separately bundled maintained ISO catalog; no endpoint geolocation
+is inferred. Existing profiles stay unassigned until the user adds metadata.
+
+Quick Connect ranks recent authenticated observations and preferences, not
+fabricated latency or throughput. No RTT probing or idle tunnel activation is
+introduced. Generated identities remain pending remote registration. Sequential
+switches use the same operation lock and validate before teardown; protected
+switches are refused because the current backends provide no continuous kill
+switch. A failed destination stays explicitly failed after cleanup rather than
+automatically activating another profile. Revisit Windows and protected switching
+only with a tested privileged service/helper and controlled live-platform tests.

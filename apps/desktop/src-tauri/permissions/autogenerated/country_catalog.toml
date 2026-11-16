@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-country-catalog"
+description = "Enables the country_catalog command without any pre-configured scope."
+commands.allow = ["country_catalog"]
+
+[[permission]]
+identifier = "deny-country-catalog"
+description = "Denies the country_catalog command without any pre-configured scope."
+commands.deny = ["country_catalog"]

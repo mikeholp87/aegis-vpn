@@ -32,7 +32,7 @@ export function Profiles() {
   return (
     <div className="flex flex-col gap-4">
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Profiles</h1>
+        <h1 className="text-[28px] leading-tight font-semibold tracking-[-0.015em]">Profiles</h1>
         <div className="flex gap-2">
           <Button onClick={create}>
             <Plus size={15} aria-hidden /> New profile
@@ -62,17 +62,19 @@ export function Profiles() {
       ) : shown.length === 0 ? (
         <p className="py-6 text-muted">No profile matches “{q}”.</p>
       ) : (
-        <ul className="divide-y divide-line rounded-lg border border-line bg-surface">
+        <ul className="divide-y divide-line rounded-xl border border-line bg-surface">
           {shown.map((p) => (
             <li key={p.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-medium">{p.name}</span>
                   {p.active && (
-                    <span className="rounded bg-accent-soft px-1.5 text-[11.5px] text-accent">Active</span>
+                    <span className="rounded-md bg-ok-soft px-1.5 py-px text-[12px] font-semibold text-ok">
+                      Active
+                    </span>
                   )}
                   <span
-                    className={`rounded px-1.5 text-[11.5px] ${
+                    className={`rounded-md px-1.5 py-px text-[12px] ${
                       p.summary.route_kind === "split" ? "bg-raised text-muted" : "bg-raised text-fg"
                     }`}
                   >
@@ -84,7 +86,7 @@ export function Profiles() {
                     </span>
                   )}
                 </div>
-                <div className="mt-0.5 truncate text-[12.5px] text-muted">
+                <div className="mt-0.5 truncate font-mono text-[12.5px] text-muted">
                   {p.summary.endpoints.join(", ") || "No endpoint"} · {p.summary.addresses.join(", ")}
                 </div>
               </div>
@@ -208,10 +210,12 @@ export function Editor({
   id,
   initial,
   onClose,
+  onSaved,
 }: {
   id: string | null;
   initial: ProfileDraft;
   onClose: () => void;
+  onSaved?: (profile: ProfileView) => void;
 }) {
   const { run } = useStore();
   const [d, setD] = useState(initial);
@@ -243,6 +247,18 @@ export function Editor({
 
   const save = async () => {
     const mtu = numOrNull(text.mtu);
+    const invalidKeepalive = text.peers.findIndex((p) => Number.isNaN(numOrNull(p.keepalive)));
+    if (invalidKeepalive >= 0) {
+      setIssues([
+        {
+          severity: "error",
+          line: null,
+          field: "PersistentKeepalive",
+          message: `Peer ${invalidKeepalive + 1}: enter a whole number from 0 to 65535 seconds, or leave blank.`,
+        },
+      ]);
+      return;
+    }
     const draft: ProfileDraft = {
       ...d,
       addresses: list(text.addresses),
@@ -259,9 +275,9 @@ export function Editor({
     };
     setSaving(true);
     try {
-      if (id) await api.updateProfile(id, draft);
-      else await api.createProfile(draft);
+      const profile = id ? await api.updateProfile(id, draft) : await api.createProfile(draft);
       onClose();
+      onSaved?.(profile);
       void run(async () => {}, id ? "Profile saved" : "Profile created");
     } catch (e) {
       const ue = asUiError(e);
@@ -293,7 +309,7 @@ export function Editor({
           onChange={(name) => setD({ ...d, name })}
           error={err("Name")}
         />
-        <fieldset className="rounded-md border border-line p-3">
+        <fieldset className="rounded-xl border border-line p-4">
           <legend className="px-1 text-[13px] font-semibold">Interface</legend>
           <KeyChoice
             label="Private key"
@@ -338,7 +354,7 @@ export function Editor({
         {d.peers.map((p, i) => (
           <fieldset
             key={`peer-${i}-${p.public_key.slice(0, 6)}`}
-            className="rounded-md border border-line p-3"
+            className="rounded-xl border border-line p-4"
           >
             <legend className="px-1 text-[13px] font-semibold">Peer {d.peers.length > 1 ? i + 1 : ""}</legend>
             <div className="grid gap-3 sm:grid-cols-2">

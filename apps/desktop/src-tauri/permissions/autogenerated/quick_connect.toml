@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-quick-connect"
+description = "Enables the quick_connect command without any pre-configured scope."
+commands.allow = ["quick_connect"]
+
+[[permission]]
+identifier = "deny-quick-connect"
+description = "Denies the quick_connect command without any pre-configured scope."
+commands.deny = ["quick_connect"]

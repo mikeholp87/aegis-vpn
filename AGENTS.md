@@ -21,7 +21,8 @@ Read before changing behaviour:
 ```
 crates/aegis-config   wg-quick parser/validator, SecretKey (no Display/Serialize)
 crates/aegis-core     Engine (state machine, reconnect, recovery), VpnBackend trait,
-                      ProfileDraft, Store (non-secret JSON), diagnostics, MockBackend
+                      ProfileDraft, Store (non-secret JSON), registry (location metadata on profiles),
+                      diagnostics, MockBackend
 crates/aegis-linux    NetworkManager backend over D-Bus (zbus), settings mapping
 crates/aegis-windows  Windows backend: STUB, reports unavailable (Phase D)
 apps/desktop          React UI (src/), Tauri shell (src-tauri/)
@@ -58,7 +59,7 @@ scripts/vm/run-vm-tests.sh                   # full-tunnel/leak suite in a dispo
    `SaveConfig` are rejected. `Table`/`FwMark`/unknown keys are rejected, not
    dropped.
 5. **Honest state.** `Connected` = backend link up; peer confirmation is
-   `PeerState`; reachability is not tested. Protection features are
+   `PeerState`; reachability is only the tunnel-DNS lookup (DECISIONS D13). Protection features are
    `Off/Unsupported/Configured/Verified/Failed`, never inferred from a setting.
    A requested protection the backend cannot provide blocks connecting
    (fail closed), it is never silently downgraded.
@@ -86,3 +87,16 @@ scripts/vm/run-vm-tests.sh                   # full-tunnel/leak suite in a dispo
 - Frontend: Tailwind tokens in `src/styles.css` (light + dark), Biome lint,
   native elements first (`<dialog>`, radio inputs) for accessibility.
 - Commits: conventional prefixes (`feat:`, `fix:`, `docs:`, `test:`).
+
+## Locations
+
+- A server uses its existing ProfileId; endpoints and credentials have one source
+  of truth. Metadata is `ProfileMeta.server` with serde defaults for old stores.
+- Country catalog: `crates/aegis-core/data/countries.json` (iso-codes); bundled
+  flag assets: `apps/desktop/public/flags/`. Preserve upstream licenses.
+- Generated client/preshared keys require remote registration again. Keep the
+  pending-registration gate; existing private keys enter only via native import.
+- Success history needs actual peer evidence. Never invent RTT/load/geography.
+- Preflight a switch before teardown, retain cancellation throughout preflight,
+  and refuse protected switching until continuous protection is implemented.
+- Usage, platform gaps and provisioning boundaries: `docs/features/LOCATIONS.md`.
