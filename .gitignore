@@ -1,0 +1,9 @@
+/target
+node_modules/
+dist/
+apps/desktop/src-tauri/gen/schemas/
+*.log
+.DS_Store
+# Never commit real WireGuard profiles; fixtures use RFC test vectors / throwaway keys.
+*.conf
+!tests/fixtures/**/*.conf

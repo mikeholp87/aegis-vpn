@@ -1,0 +1,22 @@
+[package]
+name = "aegis-config"
+description = "WireGuard configuration parsing and validation for Aegis VPN"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+base64.workspace = true
+ipnet.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+x25519-dalek.workspace = true
+zeroize.workspace = true
+getrandom.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

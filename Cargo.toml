@@ -1,0 +1,53 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/aegis-config",
+    "crates/aegis-core",
+    # "crates/aegis-linux",
+    # "crates/aegis-windows",
+    # "services/linux-helper",
+    # "services/windows-service",
+    # "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/aegis-vpn/aegis-vpn"
+rust-version = "1.88"
+
+[workspace.dependencies]
+aegis-config = { path = "crates/aegis-config" }
+aegis-core = { path = "crates/aegis-core" }
+aegis-linux = { path = "crates/aegis-linux" }
+aegis-windows = { path = "crates/aegis-windows" }
+
+base64 = "0.23"
+ipnet = { version = "2.12", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio-util = "0.7"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.29", features = ["v4", "serde"] }
+x25519-dalek = { version = "3", features = ["static_secrets"] }
+zeroize = "1.9"
+getrandom = "0.4"
+proptest = "1.12"
+zbus = { version = "6", default-features = false, features = ["tokio"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+unwrap_used = "warn"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
