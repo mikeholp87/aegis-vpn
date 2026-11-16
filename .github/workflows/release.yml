@@ -1,0 +1,57 @@
+# Release builds run only for version tags and never for pull requests.
+# Update signing (TAURI_SIGNING_PRIVATE_KEY) is intentionally not wired up yet:
+# the updater stays disabled until signing and rollback have been tested.
+# Artifacts are uploaded to the workflow run; creating the GitHub Release is a
+# manual step until the release criteria in docs/testing/TEST_PLAN.md pass.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            bundles: deb,rpm
+          - os: windows-2025
+            bundles: nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 12
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev rpm
+      - working-directory: apps/desktop
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm tauri build --bundles ${{ matrix.bundles }}
+      - name: Checksums
+        shell: bash
+        run: |
+          cd target/release/bundle
+          find . -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.exe' \) -print0 | xargs -0 sha256sum > SHA256SUMS-${{ runner.os }}.txt
+          cat SHA256SUMS-*.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: aegis-vpn-${{ runner.os }}
+          path: |
+            target/release/bundle/**/*.deb
+            target/release/bundle/**/*.rpm
+            target/release/bundle/**/*.exe
+            target/release/bundle/SHA256SUMS-*.txt
+
