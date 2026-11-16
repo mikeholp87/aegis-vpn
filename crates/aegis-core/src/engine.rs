@@ -913,15 +913,6 @@ impl<B: VpnBackend> Engine<B> {
                             p.server.last_response_ms = Some(now);
                         }
                     }
-                    self.verify_protection(id, &s).await;
-                    let uncertain = matches!(self.live().state, ConnectionState::Uncertain { .. });
-                    if uncertain && self.check_requested_protection().is_ok() {
-                        self.set_state(ConnectionState::Connected {
-                            profile: id,
-                            since_ms,
-                            peer,
-                        });
-                    }
                     match changed {
                         Some(PeerState::Confirmed) => {
                             self.log(Level::Info, "Server responded; tunnel confirmed")
@@ -931,6 +922,15 @@ impl<B: VpnBackend> Engine<B> {
                             self.log(Level::Warn, "No response from the server yet. Check the endpoint, keys, and that UDP is not blocked.");
                         }
                         _ => {}
+                    }
+                    self.verify_protection(id, &s).await;
+                    let uncertain = matches!(self.live().state, ConnectionState::Uncertain { .. });
+                    if uncertain && self.check_requested_protection().is_ok() {
+                        self.set_state(ConnectionState::Connected {
+                            profile: id,
+                            since_ms,
+                            peer,
+                        });
                     }
                     self.publish();
                 }
@@ -959,7 +959,17 @@ impl<B: VpnBackend> Engine<B> {
         }) else {
             return;
         };
-        if settings.connectivity_check {
+        // Probing through the tunnel before the server has answered races the
+        // WireGuard handshake (its retry is 5 s), so a healthy server would be
+        // reported unreachable. Wait for peer confirmation; the next poll runs it.
+        let confirmed = matches!(
+            self.live().state,
+            ConnectionState::Connected {
+                peer: PeerState::Confirmed,
+                ..
+            }
+        );
+        if settings.connectivity_check && confirmed {
             self.check_reachability(&summary, status).await;
             self.check_public_ip(&summary, status).await;
         }

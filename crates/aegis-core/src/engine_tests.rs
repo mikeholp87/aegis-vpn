@@ -738,3 +738,41 @@ async fn cancel_during_destination_preflight_preserves_current_tunnel() {
     assert_eq!(e.backend().status().await.unwrap().unwrap().id, a);
     e.disconnect().await.unwrap();
 }
+
+/// Regression: the reachability probe ran during the WireGuard handshake and
+/// reported a healthy server as "no answer within 3 seconds". It must wait for
+/// the peer to be confirmed.
+#[tokio::test(start_paused = true)]
+async fn connectivity_checks_wait_for_peer_confirmation() {
+    let (e, _d) = engine().await;
+    let mut s = e.settings();
+    s.connectivity_check = true;
+    e.set_settings(s).unwrap();
+    let id = e.import_text("Work", CONF).await.unwrap().meta.id;
+    e.backend().silent_peer(true);
+    e.connect(id).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(10)).await; // several monitor polls
+    assert_eq!(
+        e.backend().reachability_checks(),
+        0,
+        "probed before the server answered"
+    );
+
+    e.backend().silent_peer(false);
+    wait_for(&e, "peer confirmed", |s| {
+        matches!(
+            s,
+            ConnectionState::Connected {
+                peer: PeerState::Confirmed,
+                ..
+            }
+        )
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(
+        e.backend().reachability_checks() >= 1,
+        "never probed after confirmation"
+    );
+    e.disconnect().await.unwrap();
+}

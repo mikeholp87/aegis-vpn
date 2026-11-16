@@ -22,6 +22,8 @@ struct Inner {
     drop_active: bool,
     fail_deactivate: bool,
     fail_status: bool,
+    silent_peer: bool,
+    reachability_checks: usize,
 }
 
 pub struct MockBackend {
@@ -65,6 +67,14 @@ impl MockBackend {
     }
     pub fn fail_status(&self, fail: bool) {
         self.lock().fail_status = fail;
+    }
+    /// Test hook: the link is up but the server has not answered (no rx, no handshake).
+    pub fn silent_peer(&self, silent: bool) {
+        self.lock().silent_peer = silent;
+    }
+    /// How many times the engine ran the reachability check.
+    pub fn reachability_checks(&self) -> usize {
+        self.lock().reachability_checks
     }
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
@@ -153,9 +163,9 @@ impl VpnBackend for MockBackend {
                 id,
                 link: LinkState::Up,
                 interface: Some("sim0".into()),
-                rx_bytes: secs * 48_000,
+                rx_bytes: if g.silent_peer { 0 } else { secs * 48_000 },
                 tx_bytes: secs * 9_000,
-                last_handshake_ms: Some(since),
+                last_handshake_ms: (!g.silent_peer).then_some(since),
             }
         }))
     }
@@ -174,6 +184,7 @@ impl VpnBackend for MockBackend {
         _profile: &ProfileSummary,
         _status: &TunnelStatus,
     ) -> Feature {
+        self.lock().reachability_checks += 1;
         Feature::Unsupported(SIM.into())
     }
 
