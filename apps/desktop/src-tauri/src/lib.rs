@@ -7,7 +7,6 @@ use std::sync::Arc;
 use aegis_core::{ConnectionState, Engine, EngineEvent, PeerState};
 use commands::AppState;
 use tauri::{DragDropEvent, Emitter, Manager, WindowEvent};
-use tauri_plugin_notification::NotificationExt as _;
 
 pub fn run() {
     tracing_subscriber::fmt()
@@ -22,7 +21,6 @@ pub fn run() {
             show_main(app)
         }))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -170,10 +168,24 @@ fn notify_transition(
         ConnectionState::Failed { .. } => "VPN connection failed. Open Aegis VPN for details.",
         _ => return,
     };
-    let _ = app
-        .notification()
-        .builder()
-        .title("Aegis VPN")
-        .body(body)
-        .show();
+    show_notification(body);
+}
+
+/// Desktop notification via notify-rust: freedesktop D-Bus on Linux (zbus 6 on
+/// our tokio runtime), WinRT toasts on Windows. Failures are logged, never fatal.
+fn show_notification(body: &'static str) {
+    let mut n = notify_rust::Notification::new();
+    n.appname("Aegis VPN").summary("Aegis VPN").body(body);
+    #[cfg(all(unix, not(target_os = "macos")))]
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = n.show_async().await {
+            tracing::warn!("could not show notification: {e}");
+        }
+    });
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = n.show() {
+            tracing::warn!("could not show notification: {e}");
+        }
+    });
 }

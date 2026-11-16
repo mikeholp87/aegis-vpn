@@ -35,7 +35,8 @@ export function About() {
           </p>
           <p>
             Built with Tauri, React, Tailwind CSS, Lucide icons, and Rust crates including tokio, serde, zbus,
-            ipnet and x25519-dalek. The full dependency and license inventory ships with each release.
+            notify-rust, ipnet and x25519-dalek. The full dependency and license inventory ships with each
+            release.
           </p>
           <p>Aegis VPN has not been independently security-audited.</p>
         </div>

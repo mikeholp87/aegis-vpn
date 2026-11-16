@@ -40,10 +40,11 @@ First shipped on zbus 5.19; migrated to 6.3 on 2026-11-16 after RustSec
 flagged zbus 5's zvariant, zvariant_derive and zbus_names as unmaintained
 (RUSTSEC-2026-0370/71/72; zbus 6 merged them in). Our code uses
 `zbus::{Variant, OwnedVariant, OwnedObjectPath, Proxy}` with features
-`tokio` + `proxy`. **Remaining:** zbus 5 is still pulled in transitively by
-tauri-plugin-notification 2.8.1 and tauri-plugin-single-instance 2.5.5 (latest
-releases). *Revisit:* bump those plugins when they move to zbus 6; if that
-stalls, consider replacing the notification plugin (notify-rust already uses zbus 6).
+`tokio` + `proxy`. tauri-plugin-notification was replaced by `notify-rust`
+4.19 (`z-with-tokio`, zbus 6) called from Rust. **Remaining:** zbus 5 is still
+pulled in by tauri-plugin-single-instance 2.5.5 (latest release), which we keep
+because re-launching is how users get the window back on desktops without a
+tray. *Revisit:* bump it when it moves to zbus 6.
 
 ### D8. Fewer crates than the original outline
 Storage and diagnostics live in `aegis-core`; IPC crate deferred until the

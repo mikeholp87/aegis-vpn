@@ -2,6 +2,18 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-16 (later) — tauri-plugin-notification → notify-rust 4.19
+
+| Check | Command | Result |
+|---|---|---|
+| Format / clippy | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` | pass |
+| Tests | `cargo test --workspace` | 51 passed |
+| zbus 5 dependents | `cargo tree -i zbus@5.19.0` | only tauri-plugin-single-instance 2.5.5 remains |
+| Rust advisories | `cargo audit` | 0 vulnerabilities; same 5 warnings (zbus 5 crates now via single-instance only; proc-macro-error; glib 0.18) |
+| Windows type-check | `cargo check -p aegis-desktop --target x86_64-pc-windows-msvc` | not possible here: tauri-build needs `llvm-rc` (not installed). The `cfg(not(unix))` notification branch is unverified until the Windows CI job runs |
+
+Not run: an actual notification popup on KDE/GNOME/Windows.
+
 ## 2026-11-16 (later) — zbus 5.19 → 6.3 migration, same host
 
 | Check | Command | Result |

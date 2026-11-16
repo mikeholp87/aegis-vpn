@@ -5,7 +5,8 @@ Versions checked against crates.io / npm on 2026-11-16.
 | Component | Version | Notes |
 |---|---|---|
 | Tauri | 2.12.5 (`@tauri-apps/cli` 2.12.4) | capabilities + app manifest permissions; tray-icon feature |
-| tauri-plugin-dialog / single-instance / autostart / notification | 2.8.4 / 2.5.5 / 2.7.0 / 2.8.1 | used from Rust only |
+| tauri-plugin-dialog / single-instance / autostart | 2.8.4 / 2.5.5 / 2.7.0 | used from Rust only |
+| notify-rust | 4.19.0 | desktop notifications; freedesktop D-Bus via zbus 6 on Linux, WinRT toasts on Windows |
 | zbus | 6.3.0 | zvariant merged into zbus in 6.0; see DECISIONS D7 |
 | ipnet, base64, zeroize, x25519-dalek, getrandom | 2.12, 0.23, 1.9, 3.0, 0.4 | key derivation tested with RFC 7748 §6.1 vector |
 | React / Vite / Tailwind / TypeScript / Vitest | 19.3 / 8.3 / 4.3 / 7.0 / 5.1 | |

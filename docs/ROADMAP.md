@@ -14,7 +14,7 @@ Legend: [x] done and verified · [~] implemented, not fully verified · [ ] not 
 - [x] Light/dark/system theme, keyboard focus, reduced motion, native dialogs/radios
 - [x] 9 Vitest UI tests
 - [~] Tray menu: implemented; not tested on GNOME/KDE/Windows
-- [~] Notifications, autostart: implemented; not tested
+- [~] Notifications (notify-rust), autostart: implemented; not tested
 - [ ] Visual review of the running app by a human (agent did not screenshot)
 
 ## Phase C: Linux backend
