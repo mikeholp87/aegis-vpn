@@ -67,6 +67,7 @@ dependencies = [
  "aegis-config",
  "aegis-core",
  "ipnet",
+ "serde_json",
  "tokio",
  "tracing",
  "uuid",

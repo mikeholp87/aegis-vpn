@@ -674,7 +674,8 @@ impl<B: VpnBackend> Engine<B> {
         crate::diagnostics::run(self).await
     }
 
-    pub(crate) fn backend(&self) -> &B {
+    /// The underlying backend (read access for diagnostics and integration tests).
+    pub fn backend(&self) -> &B {
         &self.backend
     }
 

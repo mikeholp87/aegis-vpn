@@ -26,6 +26,8 @@ Host state before vs after (`ip route/rule show table all` v4+v6, `resolvectl dn
 `nmcli connection show`): policy rules **identical**, DNS **identical**, NM
 connection list **identical**. Routes differ only by the test peer's own
 `aegis-veth0` link routes (created by the script, removed by `down`).
+After `test-netns-peer.sh down`: routes and policy rules (v4+v6, all tables)
+**identical** to the pre-test snapshot.
 
 Not covered by this run: full-tunnel routing, DNS/IPv6 leak behaviour, kill
 switch, reconnect after a real drop, NM restart, suspend/resume, reboot, and
