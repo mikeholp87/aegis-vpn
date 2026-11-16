@@ -21,7 +21,7 @@ Legend: [x] done and verified · [~] implemented, not fully verified · [ ] not 
 - [x] NetworkManager detection (read-only probe passed on NM 1.58.1)
 - [x] WgConfig ↔ NM settings mapping + 8 tests
 - [~] install/activate/deactivate/status/load via D-Bus: compiled, **live test pending** (needs `sudo scripts/test-netns-peer.sh up`)
-- [ ] Migrate zbus 5 → 6 (RustSec unmaintained warnings)
+- [x] Migrate our code to zbus 6 (zbus 5 remains only via two Tauri plugins; see DECISIONS D7)
 - [ ] Non-NM fallback via root helper (shown as unavailable meanwhile)
 - [ ] React to NM signals instead of 2 s polling
 

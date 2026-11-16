@@ -22,4 +22,4 @@ integrity of system network configuration.
 | Unsafe updates | Updater disabled until signing + rollback tested | By design |
 
 Known dependency warnings: see `docs/testing/TEST_RESULTS.md` (zbus 5 crates
-unmaintained; glib 0.18 unsound via Tauri's GTK3 stack).
+unmaintained, now only via two Tauri plugins; glib 0.18 unsound via Tauri's GTK3 stack).

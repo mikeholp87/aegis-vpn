@@ -37,7 +37,7 @@ x25519-dalek = { version = "3", features = ["static_secrets"] }
 zeroize = "1.9"
 getrandom = "0.4"
 proptest = "1.12"
-zbus = { version = "5.19", default-features = false, features = ["tokio"] }
+zbus = { version = "6.3", default-features = false, features = ["tokio", "proxy"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

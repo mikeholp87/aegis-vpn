@@ -13,8 +13,8 @@ use aegis_core::{
     BackendKind, Capabilities, CoreError, Feature, LinkState, ProfileId, ProfileSummary,
     Protection, Result, Settings as AppSettings, Support, TunnelStatus, VpnBackend,
 };
-use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 use zbus::{Connection, Proxy};
+use zbus::{OwnedObjectPath, OwnedVariant};
 
 use crate::settings::{self, Settings};
 
@@ -221,15 +221,15 @@ impl VpnBackend for NmBackend {
         let new = settings::to_settings(id, name, &self.user, cfg);
         if let Some(path) = self.find_connection(id).await? {
             let c = self.proxy(path.as_str(), IF_CONN).await?;
-            let args: HashMap<String, OwnedValue> = HashMap::new();
+            let args: HashMap<String, OwnedVariant> = HashMap::new();
             // Update2 flags: 0x1 = persist to disk.
-            c.call::<_, _, HashMap<String, OwnedValue>>("Update2", &(new, ADD_TO_DISK, args))
+            c.call::<_, _, HashMap<String, OwnedVariant>>("Update2", &(new, ADD_TO_DISK, args))
                 .await
                 .map_err(map_err)?;
         } else {
             let s = self.proxy(SETTINGS_PATH, IF_SETTINGS).await?;
-            let args: HashMap<String, OwnedValue> = HashMap::new();
-            s.call::<_, _, (OwnedObjectPath, HashMap<String, OwnedValue>)>(
+            let args: HashMap<String, OwnedVariant> = HashMap::new();
+            s.call::<_, _, (OwnedObjectPath, HashMap<String, OwnedVariant>)>(
                 "AddConnection2",
                 &(new, ADD_TO_DISK | ADD_BLOCK_AUTOCONNECT, args),
             )

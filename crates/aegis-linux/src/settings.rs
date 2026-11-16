@@ -2,7 +2,7 @@
 //! settings (`a{sa{sv}}`). No D-Bus I/O here, so it is fully unit-tested.
 //!
 //! Reference: NetworkManager "settings-wireguard", "settings-ipv4/ipv6",
-//! "settings-connection" documentation (NM >= 1.16).
+//! "settings-connection" documentation (NM >= 1.16). D-Bus types come from zbus 6 (`Variant`, `OwnedVariant`; the former zvariant crate).
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -10,9 +10,9 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use aegis_config::{Endpoint, Interface, Peer, RouteKind, WgConfig};
 use aegis_core::{CoreError, ProfileId, Result};
 use ipnet::IpNet;
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::{OwnedVariant, Variant};
 
-pub type Section = HashMap<String, OwnedValue>;
+pub type Section = HashMap<String, OwnedVariant>;
 pub type Settings = HashMap<String, Section>;
 
 /// Interface names of tunnels we own start with this; it is also how
@@ -28,15 +28,15 @@ pub fn iface_name(id: ProfileId) -> String {
     format!("{IFACE_PREFIX}{}", &id.0.simple().to_string()[..8])
 }
 
-fn ov<'a>(v: impl Into<Value<'a>>) -> OwnedValue {
-    OwnedValue::try_from(v.into()).expect("values without file descriptors always convert")
+fn ov<'a>(v: impl Into<Variant<'a>>) -> OwnedVariant {
+    OwnedVariant::try_from(v.into()).expect("values without file descriptors always convert")
 }
 
-fn section(items: Vec<(&str, OwnedValue)>) -> Section {
+fn section(items: Vec<(&str, OwnedVariant)>) -> Section {
     items.into_iter().map(|(k, v)| (k.to_owned(), v)).collect()
 }
 
-fn address_data(nets: &[&IpNet]) -> Vec<HashMap<String, OwnedValue>> {
+fn address_data(nets: &[&IpNet]) -> Vec<HashMap<String, OwnedVariant>> {
     nets.iter()
         .map(|n| {
             HashMap::from([
@@ -66,7 +66,7 @@ pub fn to_settings(id: ProfileId, name: &str, user: &str, cfg: &WgConfig) -> Set
     ]);
     conn.insert("zone".into(), ov("")); // leave firewalld zone untouched
 
-    let peers: Vec<HashMap<String, OwnedValue>> = cfg
+    let peers: Vec<HashMap<String, OwnedVariant>> = cfg
         .peers
         .iter()
         .map(|p| {
@@ -139,7 +139,7 @@ pub fn to_settings(id: ProfileId, name: &str, user: &str, cfg: &WgConfig) -> Set
         })
         .collect();
 
-    let ip_section = |nets: &[&IpNet], full: bool, has_dns: bool, dns: OwnedValue| -> Section {
+    let ip_section = |nets: &[&IpNet], full: bool, has_dns: bool, dns: OwnedVariant| -> Section {
         if nets.is_empty() {
             // Without an address of this family NM must not configure it. For a
             // full tunnel this would leak, which the profile warnings report.
@@ -176,7 +176,7 @@ pub fn to_settings(id: ProfileId, name: &str, user: &str, cfg: &WgConfig) -> Set
     ])
 }
 
-fn get<'a>(s: &'a Settings, sec: &str, key: &str) -> Option<&'a OwnedValue> {
+fn get<'a>(s: &'a Settings, sec: &str, key: &str) -> Option<&'a OwnedVariant> {
     s.get(sec)?.get(key)
 }
 
@@ -190,17 +190,17 @@ fn bad(what: &str) -> CoreError {
     ))
 }
 
-fn str_of(m: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
+fn str_of(m: &HashMap<String, OwnedVariant>, key: &str) -> Option<String> {
     m.get(key)
         .and_then(|v| String::try_from(v.try_clone().ok()?).ok())
 }
 
-fn u32_of(m: &HashMap<String, OwnedValue>, key: &str) -> Option<u32> {
+fn u32_of(m: &HashMap<String, OwnedVariant>, key: &str) -> Option<u32> {
     m.get(key).and_then(|v| u32::try_from(v).ok())
 }
 
-fn maps(v: &OwnedValue) -> Option<Vec<HashMap<String, OwnedValue>>> {
-    Vec::<HashMap<String, OwnedValue>>::try_from(v.try_clone().ok()?).ok()
+fn maps(v: &OwnedVariant) -> Option<Vec<HashMap<String, OwnedVariant>>> {
+    Vec::<HashMap<String, OwnedVariant>>::try_from(v.try_clone().ok()?).ok()
 }
 
 /// Rebuild a [`WgConfig`] from NM settings merged with secrets.
@@ -322,7 +322,7 @@ pub fn merge_secrets(settings: &mut Settings, secrets: Settings) {
     ) else {
         return;
     };
-    let merged: Vec<HashMap<String, OwnedValue>> = peers
+    let merged: Vec<HashMap<String, OwnedVariant>> = peers
         .into_iter()
         .map(|mut p| {
             let pk = str_of(&p, "public-key");

@@ -35,11 +35,15 @@ show `Pending` until then and `NoResponse` after 20 s of unanswered traffic.
 If the kill switch is on in Settings but unsupported, `connect` refuses with a
 fix-it message instead of connecting unprotected.
 
-### D7. zbus 5.19 instead of 6.x
-zbus 6.0 (2026-10-16) renamed core types and removed APIs; 5.19 was used to
-ship the backend reliably. **Known issue:** RustSec flags zvariant,
-zvariant_derive and zbus_names 5.x as unmaintained (RUSTSEC-2026-0370/71/72).
-*Revisit:* next task, migrate to zbus 6.
+### D7. zbus 6 for the NetworkManager backend
+First shipped on zbus 5.19; migrated to 6.3 on 2026-11-16 after RustSec
+flagged zbus 5's zvariant, zvariant_derive and zbus_names as unmaintained
+(RUSTSEC-2026-0370/71/72; zbus 6 merged them in). Our code uses
+`zbus::{Variant, OwnedVariant, OwnedObjectPath, Proxy}` with features
+`tokio` + `proxy`. **Remaining:** zbus 5 is still pulled in transitively by
+tauri-plugin-notification 2.8.1 and tauri-plugin-single-instance 2.5.5 (latest
+releases). *Revisit:* bump those plugins when they move to zbus 6; if that
+stalls, consider replacing the notification plugin (notify-rust already uses zbus 6).
 
 ### D8. Fewer crates than the original outline
 Storage and diagnostics live in `aegis-core`; IPC crate deferred until the

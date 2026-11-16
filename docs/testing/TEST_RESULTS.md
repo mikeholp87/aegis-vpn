@@ -2,6 +2,17 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-16 (later) — zbus 5.19 → 6.3 migration, same host
+
+| Check | Command | Result |
+|---|---|---|
+| Format / clippy | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` | pass |
+| Tests | `cargo test --workspace` | 51 passed (21 config, 22 core, 8 linux) |
+| NM read-only probe on zbus 6 | `cargo run -p aegis-linux --example nm_probe` | pass: NM 1.58.1, 0 Aegis profiles, no active tunnel |
+| Rust advisories | `cargo audit` | 0 vulnerabilities; same 5 warnings. zvariant/zvariant_derive/zbus_names 5.x now come only from tauri-plugin-notification 2.8.1 and tauri-plugin-single-instance 2.5.5 (`cargo tree -i zbus@5.19.0`); aegis-linux no longer depends on them |
+
+Not run: live tunnel test (still needs root for the netns peer).
+
 ## 2026-11-16 — Debian forky/sid, KDE Plasma (Wayland), kernel 7.2, NM 1.58.1, rustc 1.99.1, Node 24
 
 | Check | Command | Result |
