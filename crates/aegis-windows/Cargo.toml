@@ -1,11 +1,12 @@
 [package]
 name = "aegis-windows"
+description = "Windows tunnel-service backend for Aegis VPN (not implemented yet)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
-[dependencies]
+[target.'cfg(windows)'.dependencies]
 aegis-core.workspace = true
 aegis-config.workspace = true
 

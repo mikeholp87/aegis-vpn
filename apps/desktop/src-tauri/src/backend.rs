@@ -2,11 +2,11 @@
 //! explicitly requested with `AEGIS_BACKEND=mock`; if no real backend works we
 //! report that instead of silently pretending.
 
-use aegis_config::{RouteKind, WgConfig};
+use aegis_config::WgConfig;
 use aegis_core::mock::MockBackend;
 use aegis_core::{
-    BackendKind, Capabilities, CoreError, ProfileId, Protection, Result, Settings, Support,
-    TunnelStatus, VpnBackend,
+    BackendKind, Capabilities, CoreError, ProfileId, ProfileSummary, Protection, Result, Settings,
+    Support, TunnelStatus, VpnBackend,
 };
 
 pub enum AnyBackend {
@@ -105,13 +105,13 @@ impl VpnBackend for AnyBackend {
         }
         delegate!(self, b => b.status().await)
     }
-    fn protection(&self, route: RouteKind, settings: &Settings) -> Protection {
+    fn protection(&self, profile: &ProfileSummary, settings: &Settings) -> Protection {
         match self {
-            AnyBackend::Mock(b) => b.protection(route, settings),
+            AnyBackend::Mock(b) => b.protection(profile, settings),
             #[cfg(target_os = "linux")]
-            AnyBackend::Nm(b) => b.protection(route, settings),
+            AnyBackend::Nm(b) => b.protection(profile, settings),
             #[cfg(windows)]
-            AnyBackend::Win(b) => b.protection(route, settings),
+            AnyBackend::Win(b) => b.protection(profile, settings),
             AnyBackend::Unavailable(_) => Protection::off(),
         }
     }

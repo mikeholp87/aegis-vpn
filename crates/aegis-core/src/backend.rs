@@ -1,9 +1,9 @@
 use std::future::Future;
 
-use aegis_config::{RouteKind, WgConfig};
+use aegis_config::WgConfig;
 
 use crate::error::Result;
-use crate::types::{Capabilities, ProfileId, Protection, Settings, TunnelStatus};
+use crate::types::{Capabilities, ProfileId, ProfileSummary, Protection, Settings, TunnelStatus};
 
 /// A platform networking backend.
 ///
@@ -43,5 +43,5 @@ pub trait VpnBackend: Send + Sync + 'static {
 
     /// Protection actually in effect for an active tunnel. Must never report
     /// more than is really established.
-    fn protection(&self, route: RouteKind, settings: &Settings) -> Protection;
+    fn protection(&self, profile: &ProfileSummary, settings: &Settings) -> Protection;
 }

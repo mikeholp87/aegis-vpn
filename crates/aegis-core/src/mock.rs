@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use aegis_config::{RouteKind, WgConfig};
+use aegis_config::WgConfig;
 
 use crate::backend::VpnBackend;
 use crate::error::{CoreError, Result};
@@ -143,7 +143,7 @@ impl VpnBackend for MockBackend {
         }))
     }
 
-    fn protection(&self, _route: RouteKind, _settings: &Settings) -> Protection {
+    fn protection(&self, _profile: &ProfileSummary, _settings: &Settings) -> Protection {
         let u = || Feature::Unsupported(SIM.into());
         Protection {
             kill_switch: u(),

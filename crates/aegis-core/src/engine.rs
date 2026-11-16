@@ -141,9 +141,9 @@ impl<B: VpnBackend> Engine<B> {
                 active: true,
             });
         let protection = match (&l.state, &profile) {
-            (ConnectionState::Connected { .. }, Some(p)) => self
-                .backend
-                .protection(p.meta.summary.route_kind, &l.settings),
+            (ConnectionState::Connected { .. }, Some(p)) => {
+                self.backend.protection(&p.meta.summary, &l.settings)
+            }
             _ => Protection::off(),
         };
         Snapshot {

@@ -10,7 +10,9 @@ const caps = (simulated: boolean, killSwitch = false): Capabilities => ({
   simulated,
   backend_version: null,
   available: { status: "supported" },
-  kill_switch: killSwitch ? { status: "supported" } : { status: "unsupported", detail: "helper not installed" },
+  kill_switch: killSwitch
+    ? { status: "supported" }
+    : { status: "unsupported", detail: "helper not installed" },
   dns_protection: { status: "supported" },
   ipv6_protection: { status: "supported" },
   exact_handshake_time: { status: "unsupported", detail: "needs helper" },
