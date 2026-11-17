@@ -12,7 +12,8 @@ use aegis_core::{
 };
 
 pub enum AnyBackend {
-    Mock(MockBackend),
+    // Boxed: without the Linux variant (Windows builds) the mock dwarfs the rest.
+    Mock(Box<MockBackend>),
     #[cfg(target_os = "linux")]
     Nm(aegis_linux::NmBackend),
     #[cfg(windows)]
@@ -24,10 +25,10 @@ pub async fn select(data_dir: &Path) -> AnyBackend {
     if std::env::var("AEGIS_BACKEND").as_deref() == Ok("mock") {
         tracing::warn!("using the simulated backend (AEGIS_BACKEND=mock)");
         return match MockBackend::with_store(data_dir.join("mock-backend")) {
-            Ok(b) => AnyBackend::Mock(b),
+            Ok(b) => AnyBackend::Mock(Box::new(b)),
             Err(e) => {
                 tracing::error!("mock store unavailable ({e}); using in-memory mock only");
-                AnyBackend::Mock(MockBackend::default())
+                AnyBackend::Mock(Box::default())
             }
         };
     }
@@ -214,7 +215,7 @@ mod tests {
     /// which made the feature fail in the real app while backend tests passed.
     #[tokio::test]
     async fn kill_switch_calls_reach_the_wrapped_backend() {
-        let b = AnyBackend::Mock(MockBackend::with_test_kill_switch());
+        let b = AnyBackend::Mock(Box::new(MockBackend::with_test_kill_switch()));
         let id = ProfileId::new();
         let ep = ["203.0.113.5:51820".parse().unwrap()];
         b.apply_kill_switch(id, &ep, false).await.unwrap();
