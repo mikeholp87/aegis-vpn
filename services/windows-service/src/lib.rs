@@ -18,6 +18,10 @@ pub mod security;
 pub mod server;
 #[cfg(windows)]
 pub mod store;
+#[cfg(windows)]
+pub mod tunnel_dll;
+#[cfg(windows)]
+pub mod tunnel_host;
 
 #[cfg(windows)]
 pub use handler::{Handler, Service, Skeleton};
