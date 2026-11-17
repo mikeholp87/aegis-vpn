@@ -5,9 +5,9 @@ Rust, Tauri 2 and React. Working name.
 
 > **Status: pre-alpha.** The Linux NetworkManager backend has passed live
 > split-route tests on a desktop and full-tunnel, DNS-leak, IPv6, reconnect and
-> NetworkManager-restart tests in a Debian 13 VM. There is **no kill switch**
-> and the **Windows backend is not implemented**. Do not rely on this for
-> protection yet. See [docs/ROADMAP.md](docs/ROADMAP.md) and
+> NetworkManager-restart tests in a Debian 13 VM. Linux kill-switch support
+> requires the separately installed helper; **protected switching and the Windows
+> backend are not implemented**. This remains pre-alpha software. See [docs/ROADMAP.md](docs/ROADMAP.md) and
 > [docs/testing/TEST_RESULTS.md](docs/testing/TEST_RESULTS.md).
 
 ## What it does
@@ -211,9 +211,10 @@ kbuildsycoca6 2>/dev/null || update-desktop-database ~/.local/share/applications
 
 ## Limitations
 
-- No kill switch; with it enabled in Settings the app refuses to connect. During
-  connect, disconnect, switching and reconnect, traffic can use your normal
-  connection.
+- Linux kill-switch support requires the installed helper/Polkit policy and
+  literal IP endpoints. Unsupported requested protection blocks connection.
+  Protected switching is refused. Without protection, traffic can use your normal
+  connection between tunnels. See [Locations limitations](docs/features/LOCATIONS.md).
 - Full-tunnel DNS protection needs systemd-resolved managing `/etc/resolv.conf`
   (see above). Runtime route/resolver checks distinguish Configured, Verified and
   Failed; they do not replace packet-capture leak tests.

@@ -39,6 +39,7 @@ export function Locations() {
   const [assigning, setAssigning] = useState<ProfileView[]>([]);
   const [editor, setEditor] = useState<{ id: string | null; draft: ProfileDraft } | null>(null);
   const [deleting, setDeleting] = useState<ProfileView | null>(null);
+  const [managing, setManaging] = useState<ProfileView | null>(null);
   const [working, setWorking] = useState(false);
   const [guide, setGuide] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -102,7 +103,9 @@ export function Locations() {
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-[30px] font-semibold leading-tight tracking-[-0.015em]">VPN Locations</h1>
-          <p className="mt-1.5 text-muted">Choose a country and server to connect securely.</p>
+          <p className="mt-1.5 max-w-[54ch] text-muted">
+            Pick a server you configure. Aegis connects with the WireGuard profile you imported or created.
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button disabled={busy || unsafe} onClick={() => perform(api.quickConnect)}>
@@ -166,11 +169,11 @@ export function Locations() {
         ]}
       />
       {profiles.length === 0 ? (
-        <section className="rounded-xl border border-dashed border-line px-6 py-14 text-center">
+        <section className="px-2 py-14 text-center">
           <Globe size={36} className="mx-auto mb-4 text-muted" aria-hidden />
-          <h2 className="text-xl font-semibold">No VPN locations configured</h2>
-          <p className="mx-auto mt-2 max-w-[50ch] text-muted">
-            Import a WireGuard configuration or add your own remote server to get started.
+          <h2 className="text-xl font-semibold">Import a WireGuard file</h2>
+          <p className="mx-auto mt-2 max-w-[48ch] text-muted">
+            Bring in a configuration from your provider or server, then assign a country so it shows up here.
           </p>
           <div className="mt-6 flex flex-wrap justify-center gap-2">
             <Button variant="primary" disabled={busy} onClick={importServers}>
@@ -183,10 +186,22 @@ export function Locations() {
           </div>
         </section>
       ) : groups.length === 0 ? (
-        <p className="rounded-xl border border-line p-8 text-muted" role="status">
-          No servers match this filter. Available servers require an authenticated response within five
-          minutes. Try All countries or add a server.
-        </p>
+        <div className="px-1 py-8" role="status">
+          <p className="font-medium">
+            {filter === "available"
+              ? "No servers have answered recently"
+              : filter === "favorites"
+                ? "No favorite servers yet"
+                : filter === "recent"
+                  ? "No recently used servers"
+                  : "No servers match this filter"}
+          </p>
+          <p className="mt-2 max-w-[58ch] text-muted">
+            {filter === "available"
+              ? "Available only lists servers that returned an authenticated WireGuard response in the last five minutes while a tunnel was up. Idle servers are not probed. Try All countries, or connect once so a response can be recorded."
+              : "Try All countries, clear the search, or add a server."}
+          </p>
+        </div>
       ) : (
         <div className="grid items-start gap-5 min-[850px]:grid-cols-[230px_minmax(0,1fr)]">
           <section aria-label="Country directory" className="rounded-xl border border-line bg-surface">
@@ -209,10 +224,12 @@ export function Locations() {
                         {g.name}
                         {g.servers.some((p) => p.id === activeId) && <Dot tone={stateTone(state)} />}
                       </span>
-                      <span className="text-xs text-muted">
+                      <span className="block text-xs text-muted">
                         {g.servers.length} server{g.servers.length !== 1 ? "s" : ""}
-                        {g.responded > 0 ? ` · ${g.responded} responded recently` : ""}
                       </span>
+                      {g.responded > 0 && (
+                        <span className="block text-xs text-muted">{g.responded} responded recently</span>
+                      )}
                     </span>
                     {selectedCode === g.code ? (
                       <ChevronDown size={14} aria-hidden />
@@ -270,10 +287,10 @@ export function Locations() {
                           <CountryFlag code={p.server.location?.country_code} />
                           {p.name}
                         </h3>
-                        <p className="mt-1 text-[13px] text-muted">
-                          {locationLabel(p, countries)}
-                          {p.server.location ? " · User-assigned" : ""}
-                        </p>
+                        <p className="mt-1 text-[13px] text-muted">{locationLabel(p, countries)}</p>
+                        {p.server.location && (
+                          <p className="text-[12px] text-muted">User-assigned location</p>
+                        )}
                       </div>
                       <div className="flex items-start gap-1">
                         <button
@@ -290,35 +307,14 @@ export function Locations() {
                             className={p.server.favorite ? "fill-current text-focus" : ""}
                           />
                         </button>
-                        <details className="relative">
-                          <summary
-                            className="cursor-pointer rounded px-2 py-1 text-[13px] text-muted"
-                            aria-label={`Manage ${p.name}`}
-                          >
-                            Manage
-                          </summary>
-                          <div className="absolute right-0 z-10 mt-1 flex w-44 flex-col gap-1 rounded-lg border border-line bg-surface p-2 shadow-lg">
-                            <Button disabled={busy} onClick={() => setAssigning([p])}>
-                              Edit location
-                            </Button>
-                            <Button disabled={busy || current || unsafe} onClick={() => edit(p)}>
-                              Edit configuration
-                            </Button>
-                            <Button
-                              disabled={busy}
-                              onClick={() => void saveSettings({ ...settings, preferred_profile: p.id })}
-                            >
-                              {p.preferred ? "Preferred server" : "Set preferred"}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              disabled={busy || current || unsafe}
-                              onClick={() => setDeleting(p)}
-                            >
-                              Delete server
-                            </Button>
-                          </div>
-                        </details>
+                        <Button
+                          variant="ghost"
+                          className="px-2 py-1 text-[13px] text-muted"
+                          aria-label={`Manage ${p.name}`}
+                          onClick={() => setManaging(p)}
+                        >
+                          Manage
+                        </Button>
                       </div>
                     </div>
                     <p className="selectable mt-3 break-all font-mono text-[12px] text-muted">
@@ -327,14 +323,10 @@ export function Locations() {
                     <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
                       <div>
                         <dt className="text-muted">Protocol</dt>
-                        <dd>
-                          WireGuard
-                          {p.summary.peer_count > 1 ? ` · ${p.summary.peer_count} peers (preserved)` : ""}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted">Latency</dt>
-                        <dd>Not measured</dd>
+                        <dd>WireGuard</dd>
+                        {p.summary.peer_count > 1 && (
+                          <dd className="text-muted">{p.summary.peer_count} peers (preserved)</dd>
+                        )}
                       </div>
                       <div>
                         <dt className="text-muted">Last successful connection</dt>
@@ -372,7 +364,9 @@ export function Locations() {
                             )
                           }
                         >
-                          {busy && state.state !== "disconnecting" ? "Cancel" : "Disconnect"}
+                          {["preparing", "connecting", "reconnecting"].includes(state.state)
+                            ? "Cancel"
+                            : "Disconnect"}
                         </Button>
                       ) : (
                         <Button
@@ -398,11 +392,17 @@ export function Locations() {
         </div>
       )}
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4 text-[13px]">
-        <span className="flex items-center gap-2" aria-live="polite">
-          <Dot tone={stateTone(state)} />
-          {active
-            ? `${stateHeadline(state, active.name)} · ${locationLabel(active, countries)}`
-            : "No active server"}
+        {!activeId && snapshot.protection.kill_switch.status === "verified" && (
+          <Button disabled={working} onClick={() => perform(api.disconnect)}>
+            Stop blocking
+          </Button>
+        )}
+        <span className="flex min-w-0 flex-col gap-0.5" aria-live="polite">
+          <span className="flex items-center gap-2">
+            <Dot tone={stateTone(state)} />
+            {active ? stateHeadline(state, active.name) : "No active server"}
+          </span>
+          {active && <span className="pl-5 text-xs text-muted">{locationLabel(active, countries)}</span>}
         </span>
         <div className="flex items-center gap-2">
           <label htmlFor={countryPreferenceId} className="text-muted">
@@ -486,6 +486,49 @@ export function Locations() {
           onClose={() => setEditor(null)}
           onSaved={(p) => setAssigning([p])}
         />
+      )}
+      {managing && (
+        <Modal open title={`Manage ${managing.name}`} onClose={() => setManaging(null)}>
+          <div className="flex flex-col gap-2">
+            <Button
+              disabled={busy}
+              onClick={() => {
+                setAssigning([managing]);
+                setManaging(null);
+              }}
+            >
+              Edit location
+            </Button>
+            <Button
+              disabled={busy || managing.id === activeId || unsafe}
+              onClick={() => {
+                void edit(managing);
+                setManaging(null);
+              }}
+            >
+              Edit configuration
+            </Button>
+            <Button
+              disabled={busy}
+              onClick={() => {
+                void saveSettings({ ...settings, preferred_profile: managing.id });
+                setManaging(null);
+              }}
+            >
+              {managing.preferred ? "Preferred server" : "Set preferred"}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={busy || managing.id === activeId || unsafe}
+              onClick={() => {
+                setDeleting(managing);
+                setManaging(null);
+              }}
+            >
+              Delete server
+            </Button>
+          </div>
+        </Modal>
       )}
       <Confirm
         open={!!deleting}

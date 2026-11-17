@@ -4,6 +4,7 @@
 #
 #   scripts/vm/run-vm-tests.sh            # run the suite (full + full4)
 #   KEEP_VM=1 scripts/vm/run-vm-tests.sh  # leave the VM running afterwards for debugging
+#   AEGIS_VM_MODES="" KEEP_VM=1 scripts/vm/run-vm-tests.sh  # boot only, no suite
 #
 # Runs entirely as your normal user: needs /dev/kvm access, no root. The host
 # network is untouched (QEMU user-mode networking), and the VM disk is opened
@@ -18,7 +19,9 @@ CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/aegis-vpn/vm"
 IMG_NAME=debian-13-genericcloud-amd64.qcow2
 IMG_BASE=https://cloud.debian.org/images/cloud/trixie/latest
 IMG="$CACHE/$IMG_NAME"
-MODES=(full full4)
+# AEGIS_VM_MODES="" boots the VM and installs everything without running the
+# suite (use with KEEP_VM=1 for hand experiments).
+read -ra MODES <<<"${AEGIS_VM_MODES-full full4}"
 
 die() {
 	echo "error: $*" >&2
@@ -52,6 +55,9 @@ log "building vm_suite (musl)"
 cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p aegis-linux \
 	--example vm_suite --target x86_64-unknown-linux-musl
 SUITE="$ROOT/target/x86_64-unknown-linux-musl/release/examples/vm_suite"
+cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p aegis-helper \
+	--target x86_64-unknown-linux-musl
+HELPER="$ROOT/target/x86_64-unknown-linux-musl/release/aegis-helper"
 
 # 3. Run directory, SSH key, cloud-init seed.
 RUN="$(mktemp -d "${TMPDIR:-/tmp}/aegis-vm.XXXXXX")"
@@ -106,8 +112,12 @@ log "waiting for cloud-init (installs NetworkManager, wireguard-tools, …)"
 
 # 5. Copy and run.
 scp -q -i "$RUN/id" -P "$SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-	-o LogLevel=ERROR "$SUITE" "$ROOT/scripts/test-netns-peer.sh" aegis@127.0.0.1:
+	-o LogLevel=ERROR "$SUITE" "$ROOT/scripts/test-netns-peer.sh" "$HELPER" \
+	"$ROOT/services/linux-helper/org.aegisvpn.helper.policy" aegis@127.0.0.1:
 "${SSH[@]}" chmod +x vm_suite test-netns-peer.sh
+# Same paths a package installs (see scripts/install-helper.sh).
+"${SSH[@]}" 'sudo install -D -m 0755 aegis-helper /usr/libexec/aegis-vpn/aegis-helper &&
+	sudo install -D -m 0644 org.aegisvpn.helper.policy /usr/share/polkit-1/actions/org.aegisvpn.helper.policy'
 # shellcheck disable=SC2016 # expands on the VM, not here
 "${SSH[@]}" 'echo "VM: $(. /etc/os-release; echo $PRETTY_NAME), kernel $(uname -r), NetworkManager $(/usr/sbin/NetworkManager --version), $(systemctl --version | head -1)"'
 

@@ -103,8 +103,9 @@ on a crash; this conservatively expires old health after restart.
 
 Settings controls optional connectivity checks, separately from peer response
 and DNS/IPv6 policy verification. Read its privacy disclosure before enabling
-it. DNS resolver responses and DNS-based address observations have narrower
-meaning than general internet access, throughput or geographic verification.
+it. DNS resolver responses and DNS-based address observations report the recursive resolver’s egress IPv4, not
+a verified client VPN exit address. They have narrower meaning than general
+internet access, throughput or geographic verification.
 
 ## Switching and security limits
 
@@ -121,14 +122,21 @@ mode, and no automatic rollback activation that could obscure the failure.
 A later connection requires an explicit user action or existing bounded
 reconnect for the selected profile.
 
-**No kill switch exists in this build.** Ordinary traffic can use the normal
-uplink during disconnect/switch/reconnect. When a kill switch is requested,
-connection is refused. Protected switching is also explicitly refused until a
-backend implements continuous protection across transitions. Do not rely on
-this pre-alpha for fail-closed protection. DNS/IPv6 checks report the actual
-backend observations; local resolver domains and non-full-tunnel routing retain
-their documented limitations. See architecture decision D11 for NM firewall
-leftovers after a daemon restart; Aegis never flushes global firewall state.
+Linux now has an optional nftables kill switch through the installed
+`aegis-helper`/Polkit integration. The backend reports whether it is available;
+requesting it on an unsupported installation blocks connection. It requires
+literal IP endpoints and keeps blocking after a failed attempt/drop until
+**Disconnect/Stop blocking**. See the helper documentation and current test
+results before enabling it.
+
+**Protected switching remains refused**, even when the helper is installed.
+Continuous transition protection and helper failure semantics need their own
+implementation and live acceptance. A refused switch keeps the current tunnel
+and block. Do not turn protection off merely to force a switch. With protection
+off, ordinary traffic may use the uplink between tunnels. DNS/IPv6 checks
+report backend observations; local resolver domains and non-full-tunnel routing
+retain their documented limitations. See architecture decision D11 for NM
+firewall leftovers after a daemon restart; Aegis never flushes global state.
 
 Windows remains an unavailable backend: a LocalSystem service, authenticated
 ACL-restricted IPC, DPAPI storage, official embeddable tunnel DLL integration,
@@ -181,4 +189,25 @@ Automated coverage and missing live-platform checks are recorded in
 `vpn-integration.yml` runs the VM-only suite, including switching between two
 country-labelled profiles of one controlled peer. That validates switching
 mechanics, not actual servers located in different countries. Public multi-country,
-Windows, suspend/resume, reboot and kill-switch acceptance remain unverified.
+Windows, suspend/resume, reboot and protected-switch acceptance remain
+unverified by this feature’s checks. Separately recorded helper VM checks do
+not establish protected-switch success.
+
+## Implementation files
+
+- `crates/aegis-core/src/registry.rs`, `types.rs`, `engine.rs`: metadata,
+  migration defaults, validation, history/health, selection and connection flow.
+- `apps/desktop/src/screens/Locations.tsx`, `lib/locations.ts`, `App.tsx`,
+  `Dashboard.tsx`, `Profiles.tsx`, `lib/store.ts`: directory, editing, navigation,
+  shared editor, events and active location presentation.
+- `apps/desktop/src/lib/api.ts`, `lib/types.ts`, Tauri `commands.rs`, `lib.rs`,
+  `backend.rs`, `build.rs`, `capabilities/default.json`: typed commands and
+  explicit permissions, with existing backend operation forwarding.
+- `crates/aegis-core/data/`, `apps/desktop/public/flags/`: country catalog,
+  flags and licenses. No new runtime library dependency was introduced.
+- `engine_tests.rs`, `registry.rs` unit tests, `App.test.tsx`,
+  `lib/locations.test.ts`, Linux `examples/vm_suite.rs`: regressions and isolated
+  live-test coverage. `.github/workflows/vpn-integration.yml`: manual VM CI.
+- README, AGENTS, architecture/decisions/security, roadmap, changelog and test
+  docs: usage and exact limitations. CLAUDE continues to import AGENTS as the
+  repository's single instruction source.

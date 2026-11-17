@@ -31,8 +31,14 @@ export function Profiles() {
 
   return (
     <div className="flex flex-col gap-4">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-[28px] leading-tight font-semibold tracking-[-0.015em]">Profiles</h1>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-[28px] leading-tight font-semibold tracking-[-0.015em]">Advanced WireGuard</h1>
+          <p className="mt-1.5 max-w-[56ch] text-[13px] text-muted">
+            Edit keys, peers and AllowedIPs directly. For day-to-day connect and country assignment, use
+            Locations.
+          </p>
+        </div>
         <div className="flex gap-2">
           <Button onClick={create}>
             <Plus size={15} aria-hidden /> New profile
@@ -58,7 +64,18 @@ export function Profiles() {
       </div>
 
       {profiles.length === 0 ? (
-        <p className="py-10 text-center text-muted">No profiles yet. Import a .conf file or create one.</p>
+        <div className="py-12 text-center">
+          <h2 className="text-lg font-semibold">Import a WireGuard file</h2>
+          <p className="mx-auto mt-2 max-w-[46ch] text-muted">
+            Or create a profile here if you need to enter peers and keys by hand.
+          </p>
+          <div className="mt-5 flex justify-center gap-2">
+            <Button variant="primary" onClick={() => run(api.importDialog)}>
+              Import .conf
+            </Button>
+            <Button onClick={create}>New profile</Button>
+          </div>
+        </div>
       ) : shown.length === 0 ? (
         <p className="py-6 text-muted">No profile matches “{q}”.</p>
       ) : (

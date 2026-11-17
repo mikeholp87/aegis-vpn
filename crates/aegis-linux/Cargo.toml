@@ -10,6 +10,7 @@ publish = false
 [target.'cfg(target_os = "linux")'.dependencies]
 aegis-core.workspace = true
 aegis-config.workspace = true
+futures-util.workspace = true
 ipnet.workspace = true
 tokio.workspace = true
 tracing.workspace = true

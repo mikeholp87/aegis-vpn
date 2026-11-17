@@ -38,11 +38,11 @@ export function Dashboard({ goTo }: { goTo: (s: ScreenId) => void }) {
     return (
       <div className="max-w-[46ch] py-14">
         <h1 className="text-[34px] leading-[1.1] font-semibold tracking-[-0.015em]">
-          Add a WireGuard profile to get started
+          Import a WireGuard file to get started
         </h1>
         <p className="mt-3 text-[15px] text-muted">
-          Import a <span className="font-mono">.conf</span> file from your VPN provider or server, or drop it
-          onto this window.
+          Drop a <span className="font-mono">.conf</span> onto this window, or import one from your VPN
+          provider or server.
         </p>
         <div className="mt-7 flex gap-2">
           <Button variant="primary" onClick={() => run(api.importDialog)}>
@@ -57,6 +57,7 @@ export function Dashboard({ goTo }: { goTo: (s: ScreenId) => void }) {
   const stats = snapshot?.stats;
   const connected = state.state === "connected";
   const s = selected?.summary;
+  const peerConfirmed = connected && state.peer === "confirmed";
 
   const uncertain = state.state === "uncertain";
   const tunnelTone: Tone = connected ? "ok" : uncertain ? "bad" : active ? "pending" : "none";
@@ -71,7 +72,7 @@ export function Dashboard({ goTo }: { goTo: (s: ScreenId) => void }) {
         ? reach.detail
         : reach.status === "unsupported"
           ? `Not tested: ${reach.detail}`
-          : connected
+          : connected && settings?.connectivity_check
             ? "Checking"
             : "Not tested";
 
@@ -82,7 +83,8 @@ export function Dashboard({ goTo }: { goTo: (s: ScreenId) => void }) {
           <div className="min-w-0">
             <h1
               id={headId}
-              className="text-[34px] leading-[1.1] font-semibold tracking-[-0.015em] text-balance"
+              data-tone={peerConfirmed ? "ok" : "idle"}
+              className="dashboard-headline text-[34px] leading-[1.1] font-semibold tracking-[-0.015em] text-balance"
               aria-live="polite"
             >
               {stateHeadline(state, selected?.name)}
@@ -97,52 +99,16 @@ export function Dashboard({ goTo }: { goTo: (s: ScreenId) => void }) {
                   : statusSub(state.state)}
               {connected && ` for ${duration(now - state.since_ms)}`}
             </p>
+            {!active && snapshot?.protection.kill_switch.status === "verified" && (
+              <p role="status" className="mt-1 max-w-[62ch] text-[14px] font-semibold text-pending">
+                The kill switch is blocking all traffic outside the tunnel.
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2 pt-1">
-            <label htmlFor={selectId} className="sr-only">
-              Profile
-            </label>
-            <select
-              id={selectId}
-              value={selected?.id}
-              disabled={active}
-              onChange={(e) => setChosen(e.target.value)}
-              className="h-10 max-w-56 rounded-lg border border-line bg-surface px-3 text-[14px] disabled:opacity-60"
-            >
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                  {p.id === settings?.preferred_profile ? " (preferred)" : ""}
-                </option>
-              ))}
-            </select>
             <PrimaryAction selected={selected} />
           </div>
         </header>
-
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <CountryFlag code={selected?.server.location?.country_code} />
-            <div>
-              <p className="font-semibold">
-                {selected ? locationLabel(selected, countries) : "No location selected"}
-              </p>
-              <p className="text-xs text-muted">
-                {connected ? "Active WireGuard profile" : "Selected WireGuard profile"}: {selected?.name}
-                {selected?.server.location ? " · User-assigned location" : ""}
-              </p>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              disabled={isBusy(state) || state.state === "reconnecting" || state.state === "uncertain"}
-              onClick={() => run(api.quickConnect)}
-            >
-              Quick Connect
-            </Button>
-            <Button onClick={() => goTo("locations")}>Change location</Button>
-          </div>
-        </div>
 
         <ol aria-label="What is confirmed" className="grid grid-cols-4 gap-x-1.5">
           <Hop tone={tunnelTone} title="This device" detail={s ? (s.addresses[0] ?? "") : ""} mono />
@@ -169,7 +135,7 @@ export function Dashboard({ goTo }: { goTo: (s: ScreenId) => void }) {
                 : state.peer === "confirmed"
                   ? "Server answered"
                   : state.peer === "no_response"
-                    ? "Nothing received. Check endpoint, keys and firewall."
+                    ? "No reply from the server. If this just started, the network may be down or switched; Aegis confirms again when the server answers. If it never connected, check the endpoint, keys and firewall."
                     : "Waiting for data from the server"
             }
           />
@@ -184,6 +150,48 @@ export function Dashboard({ goTo }: { goTo: (s: ScreenId) => void }) {
           <Guard title="DNS leak protection" f={snapshot?.protection.dns} />
           <Guard title="IPv6 protection" f={snapshot?.protection.ipv6} />
         </ul>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+          <div className="flex min-w-0 items-center gap-3">
+            <CountryFlag code={selected?.server.location?.country_code} />
+            <div>
+              <p className="font-semibold">
+                {selected ? locationLabel(selected, countries) : "No location selected"}
+              </p>
+              <p className="text-xs text-muted">
+                {connected ? "Active WireGuard profile" : "Selected WireGuard profile"}
+              </p>
+              <p className="text-xs text-muted">{selected?.name}</p>
+              {selected?.server.location && <p className="text-xs text-muted">User-assigned location</p>}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor={selectId} className="sr-only">
+              Profile
+            </label>
+            <select
+              id={selectId}
+              value={selected?.id}
+              disabled={active}
+              onChange={(e) => setChosen(e.target.value)}
+              className="h-10 max-w-56 rounded-lg border border-line bg-surface px-3 text-[14px] disabled:opacity-60"
+            >
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.id === settings?.preferred_profile ? " (preferred)" : ""}
+                </option>
+              ))}
+            </select>
+            <Button
+              disabled={isBusy(state) || state.state === "reconnecting" || state.state === "uncertain"}
+              onClick={() => run(api.quickConnect)}
+            >
+              Quick Connect
+            </Button>
+            <Button onClick={() => goTo("locations")}>Change location</Button>
+          </div>
+        </div>
       </section>
 
       <Panel title="Connection details">
@@ -313,6 +321,21 @@ function PrimaryAction({ selected }: { selected?: ProfileView }) {
       </Button>
     );
   }
+  const blocking = snapshot?.protection.kill_switch.status === "verified";
+  return (
+    <>
+      {blocking && (
+        <Button className={big} onClick={() => run(api.disconnect)}>
+          Stop blocking
+        </Button>
+      )}
+      <ConnectButton selected={selected} />
+    </>
+  );
+}
+
+function ConnectButton({ selected }: { selected?: ProfileView }) {
+  const { run } = useStore();
   return (
     <Button
       variant="primary"
@@ -394,7 +417,7 @@ function PublicIpRow({ connected, f }: { connected: boolean; f?: Feature }) {
     body = undefined;
   }
   return (
-    <Row label="Public IP" state={state}>
+    <Row label="DNS resolver egress IPv4" state={state}>
       {body}
     </Row>
   );

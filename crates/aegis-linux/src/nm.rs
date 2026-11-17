@@ -41,7 +41,21 @@ pub struct NmBackend {
     conn: Connection,
     user: String,
     version: String,
+    handshake: std::sync::Mutex<HandshakeCache>,
+    /// OS events (resume, network switch), handed to the engine once.
+    events: std::sync::Mutex<Option<tokio::sync::mpsc::Receiver<aegis_core::SystemEvent>>>,
 }
+
+/// Handshake reads go through pkexec, so they are cached and, after a
+/// failure, not retried for a while (no repeated Polkit prompts).
+#[derive(Default)]
+struct HandshakeCache {
+    value_ms: Option<u64>,
+    next_read: Option<std::time::Instant>,
+}
+
+const HANDSHAKE_EVERY: Duration = Duration::from_secs(10);
+const HANDSHAKE_RETRY_AFTER_ERROR: Duration = Duration::from_secs(300);
 
 fn map_err(e: zbus::Error) -> CoreError {
     if let zbus::Error::MethodError(name, msg, _) = &e {
@@ -84,11 +98,42 @@ impl NmBackend {
         let user = std::env::var("USER")
             .or_else(|_| std::env::var("LOGNAME"))
             .map_err(|_| CoreError::unsupported("cannot determine the current user name"))?;
+        let conn_for_events = conn.clone();
         Ok(Self {
             conn,
             user,
             version,
+            handshake: std::sync::Mutex::default(),
+            events: std::sync::Mutex::new(Some(crate::events::spawn(&conn_for_events))),
         })
+    }
+
+    /// Newest peer handshake (unix ms) via the root helper, `None` when it
+    /// cannot be read. Never invented: absent means unknown.
+    async fn last_handshake(&self, iface: Option<&str>) -> Option<u64> {
+        let iface = iface?;
+        if !matches!(crate::killswitch::handshake_support(), Support::Supported) {
+            return None;
+        }
+        {
+            let c = self.handshake.lock().unwrap_or_else(|p| p.into_inner());
+            if c.next_read.is_some_and(|t| std::time::Instant::now() < t) {
+                return c.value_ms;
+            }
+        }
+        let read = crate::killswitch::run_capture(vec!["handshake".into(), iface.to_owned()]).await;
+        let mut c = self.handshake.lock().unwrap_or_else(|p| p.into_inner());
+        match read.ok().and_then(|t| t.trim().parse::<u64>().ok()) {
+            Some(secs) => {
+                c.value_ms = (secs > 0).then_some(secs * 1000);
+                c.next_read = Some(std::time::Instant::now() + HANDSHAKE_EVERY);
+            }
+            None => {
+                c.value_ms = None;
+                c.next_read = Some(std::time::Instant::now() + HANDSHAKE_RETRY_AFTER_ERROR);
+            }
+        }
+        c.value_ms
     }
 
     async fn proxy(&self, path: &str, iface: &'static str) -> Result<Proxy<'static>> {
@@ -195,15 +240,10 @@ impl VpnBackend for NmBackend {
             simulated: false,
             backend_version: Some(self.version.clone()),
             available: Support::Supported,
-            kill_switch: Support::Unsupported(
-                "needs the Aegis firewall helper, which is not installed in this version".into(),
-            ),
+            kill_switch: crate::killswitch::support(),
             dns_protection: Support::Supported,
             ipv6_protection: Support::Supported,
-            exact_handshake_time: Support::Unsupported(
-                "reading WireGuard handshake times requires root; Aegis infers a server response from received data"
-                    .into(),
-            ),
+            exact_handshake_time: crate::killswitch::handshake_support(),
             notes: vec![
                 "Tunnels are NetworkManager connections named \"Aegis: …\"; they keep running if the app is closed."
                     .into(),
@@ -325,6 +365,11 @@ impl VpnBackend for NmBackend {
             );
         }
         let (rx_bytes, tx_bytes) = interface.as_deref().map(read_counters).unwrap_or((0, 0));
+        let last_handshake_ms = if state == ACTIVATED {
+            self.last_handshake(interface.as_deref()).await
+        } else {
+            None
+        };
         let link = match state {
             ACTIVATING => LinkState::Activating,
             ACTIVATED => LinkState::Up,
@@ -337,12 +382,38 @@ impl VpnBackend for NmBackend {
             interface,
             rx_bytes,
             tx_bytes,
-            last_handshake_ms: None,
+            last_handshake_ms,
         }))
     }
 
     fn protection(&self, profile: &ProfileSummary, settings: &AppSettings) -> Protection {
         profile_protection(profile, settings)
+    }
+
+    fn system_events(&self) -> Option<tokio::sync::mpsc::Receiver<aegis_core::SystemEvent>> {
+        self.events.lock().unwrap_or_else(|p| p.into_inner()).take()
+    }
+
+    async fn apply_kill_switch(
+        &self,
+        id: ProfileId,
+        endpoints: &[std::net::SocketAddr],
+        allow_lan: bool,
+    ) -> Result<()> {
+        let mut args = vec!["apply".to_owned(), settings::iface_name(id)];
+        if allow_lan {
+            args.push("--allow-lan".into());
+        }
+        args.extend(endpoints.iter().map(ToString::to_string));
+        crate::killswitch::run(args).await
+    }
+
+    async fn remove_kill_switch(&self) -> Result<()> {
+        crate::killswitch::run(vec!["remove".into()]).await
+    }
+
+    async fn kill_switch_active(&self) -> bool {
+        crate::killswitch::active()
     }
 
     async fn check_reachability(
@@ -384,8 +455,15 @@ impl VpnBackend for NmBackend {
             .collect();
         // Only upgrade what is configured; Off/Failed from the profile itself stay.
         if matches!(p.ipv6, Feature::Configured(_)) {
-            p.ipv6 =
-                verify::judge_ipv6(profile.route_kind, verify::probe(verify::PUBLIC_V6, &addrs));
+            let default = std::fs::read_to_string("/proc/net/ipv6_route")
+                .ok()
+                .and_then(|t| verify::ipv6_default_route(&t));
+            p.ipv6 = verify::judge_ipv6(
+                profile.route_kind,
+                verify::probe(verify::PUBLIC_V6, &addrs),
+                default.as_ref(),
+                status.interface.as_deref(),
+            );
         }
         if matches!(p.dns, Feature::Configured(_)) {
             let servers: Vec<_> = profile
@@ -436,8 +514,8 @@ impl NmBackend {
     }
 }
 
-/// IPv4-only full tunnels get an unreachable `::/0` route (see `settings::to_settings`).
-const BLOCKED_V6: &str = "the profile has no IPv6, so IPv6 is blocked by an unreachable route while connected; not yet verified";
+/// IPv4-only full tunnels route `::/0` into the tunnel, which drops it (see `settings::to_settings`).
+const BLOCKED_V6: &str = "the profile has no IPv6, so IPv6 is sent into the tunnel and dropped while connected; not yet verified";
 
 fn parse_active(
     p: &settings::Section,
@@ -499,11 +577,9 @@ fn profile_protection(profile: &ProfileSummary, settings: &AppSettings) -> Prote
                     )
                 }
         });
-    let kill_switch = if settings.kill_switch {
-        Feature::Unsupported("the firewall helper is not installed".into())
-    } else {
-        Feature::Off
-    };
+    // The engine reports the kill switch from what is actually installed.
+    let _ = settings;
+    let kill_switch = Feature::Off;
     let (dns, ipv6) = match profile.route_kind {
         RouteKind::Full => (
             if has_dns {

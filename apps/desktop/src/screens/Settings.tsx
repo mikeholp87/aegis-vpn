@@ -112,10 +112,17 @@ export function SettingsScreen() {
           description={
             ksUnsupported
               ? `${supportNote(caps?.kill_switch, "The kill switch")}. While this is on, Aegis refuses to connect rather than connect without it.`
-              : "Blocks traffic outside the tunnel while a full-tunnel profile is connected."
+              : "Blocks all traffic outside the tunnel from Connect until you press Disconnect, also while reconnecting or if the app crashes. Server endpoints must be IP addresses. Change it while disconnected."
           }
           checked={settings.kill_switch}
           onChange={(v) => set({ kill_switch: v })}
+        />
+        <Switch
+          label="Allow local network"
+          description="While the kill switch blocks, devices on your local network (printers, file shares, your router) stay reachable."
+          checked={settings.kill_switch_allow_lan}
+          disabled={!settings.kill_switch || ksUnsupported}
+          onChange={(v) => set({ kill_switch_allow_lan: v })}
         />
         <div className="border-t border-line py-3 text-[13px]">
           <div className="font-medium">DNS and IPv6</div>
@@ -132,20 +139,18 @@ export function SettingsScreen() {
           label="Connectivity check"
           checked={settings.connectivity_check}
           onChange={(v) => set({ connectivity_check: v })}
-          description="While connected, look up example.com and whoami.akamai.net through your tunnel's DNS (at most once a minute). That confirms the resolver answers and shows the egress IPv4 on the dashboard. The resolver sees those queries. On by default; turn off to skip them."
+          description="While connected, look up example.com and whoami.akamai.net through your tunnel's DNS (at most once a minute). That confirms the resolver answers and reports its egress IPv4. This does not verify your VPN exit IP. The resolver sees those queries. On by default; turn off to skip them."
         />
         <Switch
           label="Notifications"
           checked={settings.notifications}
           onChange={(v) => set({ notifications: v })}
+          description="Desktop alerts for connect, disconnect, and failure events when the system supports them."
         />
-        <Switch
-          label="Check for updates"
-          description="Not available yet: release signing has not been set up. Aegis makes no update requests."
-          checked={false}
-          disabled
-          onChange={() => {}}
-        />
+        <p className="border-t border-line py-3 text-[13px] text-muted">
+          Automatic updates are not available yet — release signing has not been set up, so Aegis makes no
+          update requests.
+        </p>
         <p className="border-t border-line py-3 text-[13px] text-muted">
           Aegis VPN collects no analytics and needs no account. Connectivity checks contact only the tunnel's
           configured DNS resolver (example.com reachability and whoami for public IP). Idle VPN servers are

@@ -23,7 +23,7 @@ const SECRET_FLAG_NONE: u32 = 0;
 /// Negative priority: only this connection's DNS servers are used while it is
 /// active (prevents DNS queries leaking to other interfaces' resolvers).
 pub const EXCLUSIVE_DNS_PRIORITY: i32 = -50;
-/// Metric of the unreachable `::/0` route that blocks IPv6 on IPv4-only full
+/// Metric of the `::/0` tunnel route that blocks IPv6 on IPv4-only full
 /// tunnels. Lower than any uplink default route (NM uses 100+), so it wins.
 pub const IPV6_BLOCK_METRIC: u32 = 1;
 
@@ -50,13 +50,16 @@ fn address_data(nets: &[&IpNet]) -> Vec<HashMap<String, OwnedVariant>> {
         .collect()
 }
 
-/// `unreachable ::/0` with a metric below any uplink default route.
+/// `::/0` on the tunnel device, with a metric below any uplink default route.
+/// WireGuard has no peer for IPv6 here, so it drops these packets. A device
+/// route (not `type=unreachable`, which lives on `lo`) is removed by the
+/// kernel together with the interface, so it cannot outlive the tunnel even
+/// when NetworkManager restarts while connected (seen with NM 1.52 in the VM).
 fn ipv6_block_route() -> OwnedVariant {
     ov(vec![HashMap::from([
         ("dest".to_owned(), ov("::")),
         ("prefix".to_owned(), ov(0u32)),
         ("metric".to_owned(), ov(IPV6_BLOCK_METRIC)),
-        ("type".to_owned(), ov("unreachable")),
     ])])
 }
 
@@ -191,10 +194,10 @@ pub fn to_settings(id: ProfileId, name: &str, user: &str, cfg: &WgConfig) -> Set
     let ipv6 = if !block_v6 {
         ip_section(&v6, full_v6, !dns6.is_empty(), ov(dns6))
     } else {
-        // IPv4 full tunnel that does not carry IPv6: block IPv6 with an
-        // unreachable default route instead of letting it leave through the
-        // local network. NM removes the route on disconnect. Verified on
-        // NM 1.52: `manual` with no address accepts a routes-only section.
+        // IPv4 full tunnel that does not carry IPv6: send IPv6 into the
+        // tunnel (where WireGuard drops it) instead of letting it leave
+        // through the local network. Verified on NM 1.52: `manual` with no
+        // address accepts a routes-only section.
         // IPv6 DNS servers are kept so export stays faithful; queries to them
         // cannot leave while the block is in place.
         let has_dns = !dns6.is_empty();
@@ -405,8 +408,9 @@ pub fn lacks_ipv6_block(s: &Settings) -> bool {
         .and_then(maps)
         .is_some_and(|r| {
             r.iter().any(|m| {
-                str_of(m, "type").as_deref() == Some("unreachable")
+                str_of(m, "dest").as_deref() == Some("::")
                     && u32_of(m, "prefix") == Some(0)
+                    && str_of(m, "type").is_none()
             })
         });
     routes("0.0.0.0/0") && !(routes("::/0") && has_v6_addr) && !blocked
@@ -516,7 +520,8 @@ mod tests {
             }
             let s = to_settings(id(), "Work", "alice", &cfg);
             let routes = get(&s, "ipv6", "route-data").and_then(maps).unwrap();
-            assert_eq!(str_of(&routes[0], "type").as_deref(), Some("unreachable"));
+            // A device route (no `type`): it dies with the tunnel interface.
+            assert_eq!(str_of(&routes[0], "type"), None);
             assert_eq!(str_of(&routes[0], "dest").as_deref(), Some("::"));
             assert_eq!(u32_of(&routes[0], "prefix"), Some(0));
             assert_eq!(get_str(&s, "ipv6", "method").unwrap(), "manual");

@@ -141,6 +141,7 @@ export interface Settings {
   auto_reconnect: boolean;
   reconnect_max_attempts: number;
   kill_switch: boolean;
+  kill_switch_allow_lan: boolean;
   notifications: boolean;
   connectivity_check: boolean;
   check_updates: boolean;

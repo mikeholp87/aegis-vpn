@@ -31,7 +31,7 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             let engine = tauri::async_runtime::block_on(async {
-                let backend = backend::select().await;
+                let backend = backend::select(&dir).await;
                 Engine::start(backend, &dir).await
             })
             .map_err(|e| format!("failed to start: {e}"))?;
