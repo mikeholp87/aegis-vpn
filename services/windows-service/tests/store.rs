@@ -199,9 +199,11 @@ fn a_directory_someone_else_created_is_refused() {
     let dir = Scratch::new();
     std::fs::create_dir(&dir.0).unwrap(); // default, inherited DACL
 
-    // Owner not accepted (as for any non-SYSTEM/Administrators owner).
+    // An owner list that cannot match whoever runs the test. (An elevated user,
+    // as on CI, creates directories owned by Administrators, so "SY"/"BA" would
+    // be accepted and the failure would move to the permissions check.)
     let strict = DirPolicy {
-        owners: vec!["SY".into(), "BA".into()],
+        owners: vec!["S-1-5-32-999".into()],
         ..test_policy()
     };
     let e = ConfigStore::open(dir.0.clone(), &strict)
