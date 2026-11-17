@@ -84,7 +84,12 @@ A LocalSystem Windows service. The only privileged Windows code, like
   tunnel service and any temp config.
 - **Never log keys, config text, or file contents.** Log ids and error kinds only.
 
-### Open question to settle first
+### Open question to settle first (ANSWERED 2026-11-17 from source, see DECISIONS D16)
+
+Resolved: `tunnel.dll` loads `<name>.conf.dpapi` (DPAPI, description = tunnel
+name) as well as plaintext `.conf`, so store the encrypted file and write no
+plaintext. Still to confirm by running it on Windows. The text below is the
+original question, kept for context.
 
 The embeddable README gives the exported function and service install but does
 **not** say whether `tunnel.dll` reads an encrypted config or only a plaintext

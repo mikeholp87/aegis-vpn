@@ -32,7 +32,8 @@ Legend: [x] done and verified · [~] implemented, not fully verified · [ ] not 
 - [~] `ServiceBackend` pipe client: round trips against the real pipe server in tests (hello, capabilities, bad frames); nothing beyond `Hello`/`Capabilities` is implemented behind it
 - [x] `services/windows-service` pipe server: explicit DACL, first-instance flag, bounded connections, tested unelevated (8 tests). Handler is a `Skeleton` that reports everything `Unsupported`
 - [ ] Run the service as LocalSystem under the SCM (`aegis-service service`) and re-test the pipe as SYSTEM; per-connection client check
-- [ ] DPAPI store, `WireGuardTunnel$aegis-…` install via SCM, status/handshake
+- [x] DPAPI config store in the `tunnel.dll` format (`<name>.conf.dpapi`), directory ACL verified, service-side re-validation: tested unelevated; not yet as SYSTEM or read by `tunnel.dll`
+- [ ] Build `tunnel.dll`/`wireguard.dll` (needs Go), install `WireGuardTunnel$aegis-…` via SCM, status/handshake
 - [ ] tunnel.dll + wireguard.dll build in CI, NSIS install/uninstall hooks
 - [ ] Windows kill switch (WFP, own provider/sublayer), DNS/IPv6 verification, sleep/resume, network change
 

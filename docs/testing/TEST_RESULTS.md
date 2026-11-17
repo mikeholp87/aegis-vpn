@@ -2,6 +2,44 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-17 — Windows service: encrypted config store and Install/Load/Uninstall, unelevated
+
+Windows 11 Pro, normal user (not SYSTEM). `aegis-service`: 20 tests pass (8 pipe,
+8 store, 4 service). `fmt`, `clippy --workspace --all-targets -D warnings` and
+`cargo test --workspace` pass.
+
+**Source reading, not run:** wireguard-windows `6ece77b` (2026-09-22) shows
+`tunnel.dll` loads `<name>.conf.dpapi` (DPAPI user scope, description = tunnel
+name, no entropy) as well as plaintext `.conf`; its WFP firewall for full tunnels
+is a dynamic session (fail-open if the tunnel service dies) with no LAN option.
+See DECISIONS D16. Nothing was built or executed from that source; `tunnel.dll`
+itself has never been loaded here (no Go toolchain).
+
+Store, with real DPAPI and real directory ACLs (as the current user):
+- Stored file is exactly `aegis-<24 hex>.conf.dpapi`; its bytes contain none of
+  the private key, `PrivateKey`, `[Interface]` or the endpoint; the config
+  round-trips and still parses. Saving again replaces it and leaves no `.tmp`.
+- A blob copied under another profile's name is refused (description mismatch),
+  as `tunnel.dll` would; damaged and foreign files are skipped by `list`, and
+  saving over a damaged file repairs it.
+- Two profile ids sharing the first 24 hex digits cannot overwrite each other.
+- The directory is created with `D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)` (+ owner ACE
+  in tests) and is accepted again on restart. A directory someone else
+  pre-created (inherited DACL) is refused, both for a foreign owner and for the
+  wrong permissions.
+
+Handler through the real pipe and client: Install/Load/Installed/Uninstall round
+trip; Uninstall is idempotent. The service re-validates, bypassing the app:
+`PostUp`, `Table`, a missing `Address`, non-config text and a ~100 KB config are
+all refused, nothing is stored, and the error never contains the key or the
+rejected value. Capabilities still report tunnels `Unsupported`, and `Activate`
+fails even for an installed profile.
+
+**Not run:** the production directory policy (needs SYSTEM or Administrators as
+owner), `ProgramData` as the real location, DPAPI decryption by `tunnel.dll`,
+a profile id re-import after a service restart under the SCM, the service as
+SYSTEM.
+
 ## 2026-11-17 — Windows service pipe server (`services/windows-service`), unelevated
 
 Windows 11 Pro, normal (non-elevated) user, so the server did **not** run as

@@ -199,12 +199,37 @@ installs `WireGuardTunnel$<name>` (own-process, auto start, depends on `Nsi` and
 `WireGuardTunnelService(LPCWSTR)`. `<name>` is `aegis-` + 24 hex of the profile
 id (32-char WireGuard limit; service names are case-insensitive); only names of
 exactly that shape are ever touched (`names`, unit-tested).
-*Secrets.* Configs live in the service's ProgramData directory, DPAPI-encrypted
-(machine scope, since the service is LocalSystem), ACL SYSTEM + Administrators.
-The README does not say whether `tunnel.dll` reads encrypted configs, so the
-plan assumes a plaintext `.conf` exists only while the tunnel runs, in a
-SYSTEM-only directory, deleted at stop and at service start. **Unverified;
-decide when a Windows machine can confirm.**
+*Secrets (resolved by reading wireguard-windows `6ece77b`, 2026-09-22; not yet run).*
+`WireGuardTunnelService(conf)` calls `conf.LoadFromPath`, which accepts either a
+plaintext `<name>.conf` or **`<name>.conf.dpapi`**. For `.dpapi` it calls
+`CryptUnprotectData` (flags `CRYPTPROTECT_UI_FORBIDDEN` only: user scope of the
+calling account, no extra entropy) and requires the DPAPI description to equal
+the tunnel name. The tunnel service and our service are both LocalSystem, so the
+service stores `ProgramData\Aegis VPN\<name>.conf.dpapi` encrypted with
+`CryptProtectData(description = name)` and the tunnel reads it directly: **no
+plaintext config ever touches disk**, which replaces the earlier plaintext plan.
+Implemented in `services/windows-service/src/{dpapi,store}.rs`. The full profile
+id (a tunnel name holds only 24 of its 32 hex digits) is kept as a leading
+`# aegis-profile-id = …` comment inside the encrypted payload, which
+WireGuard's parser ignores. The directory is created with a protected SYSTEM +
+Administrators DACL, and an existing one is accepted only if its owner is SYSTEM
+or Administrators and its DACL matches exactly, because `ProgramData` lets any
+user pre-create a folder and then swap a config. The service re-parses and
+re-validates every `Install` itself and stores the validated canonical form. `aegis-<24 hex>` passes `TunnelNameIsValid`
+(`^[a-zA-Z0-9_=+.-]{1,32}$`, no `$`). To verify on a machine: build `tunnel.dll`,
+encrypt a config as SYSTEM, start the tunnel service, and check it loads.
+*The official tunnel firewall is not our kill switch (source read, not tested).*
+`enableFirewall` runs only when the config has exactly one peer, no `Table = off`
+and an AllowedIPs entry that is a masked `/0`. It then installs, in a **dynamic**
+WFP session, permit rules for the tunnel service process (unrestricted), loopback,
+the tunnel interface, DHCP and NDP, DNS blocks except to the tunnel's DNS, and a
+block-all at the lowest weight. So: LAN is blocked with no option to allow it;
+the filters exist only while the tunnel service process lives, so a crash or stop
+leaves traffic **unblocked**, and nothing covers the gap before connect or during
+reconnect. It does not meet the `apply_kill_switch` contract (survives a crash,
+`allow_lan`, removed on disconnect, our own provider key). Aegis needs its own WFP
+filters; they must not conflict with these (the tunnel service is permitted
+unrestricted, so the endpoint UDP needs no extra rule from us).
 *Pipe security (implemented, tested unelevated on Windows 11).* The pipe has an
 explicit protected DACL (`services/windows-service/src/security.rs`): deny network
 logons; SYSTEM and Administrators full; interactive users `0x12019b`
