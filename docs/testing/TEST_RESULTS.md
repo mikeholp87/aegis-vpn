@@ -2,6 +2,40 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-17 — tunnel.dll and wireguard.dll built/fetched (not loaded or run)
+
+Go 1.27.4 (official zip, SHA-256 matched go.dev's published value) extracted to
+`C:\Users\digit\tools\go-install`, not on PATH, no installer, no admin. From
+wireguard-windows `6ece77b`, built only the amd64 `tunnel.dll` with the same
+command and flags as `embeddable-dll-service/build.bat`
+(`-buildmode c-shared -trimpath -ldflags="-w -s"`, cgo with llvm-mingw 20260311,
+`GOTOOLCHAIN=local`; module downloads checked by the repo's `go.sum`). The repo's
+own `..\build.bat` was not run (it also builds the GUI for 3 architectures).
+Inputs pinned by the upstream script and verified by SHA-256: llvm-mingw
+`dd4c67d9…b182e1`, wireguard-nt 1.1 `dceb30a9…f038dace`.
+
+| file | SHA-256 | note |
+|---|---|---|
+| `tunnel.dll` (amd64, local build, unsigned) | `70e8d70361097d54a0a1245a1b99d363ab0e853a166919edca5bf2ef6def2082` | exports `WireGuardTunnelService`, `WireGuardGenerateKeypair` (from `tunnel.h`) |
+| `wireguard.dll` (amd64, wireguard-nt 1.1) | `b1b85e072c45d81358be29d94c599dc76652f912be8c0f0a41e2d5d89a6461d3` | Authenticode valid, signer WireGuard LLC |
+
+A successful build is not a test.
+
+**Format compatibility, run (as the current user, no elevation):** a throwaway Rust
+program (outside the repo) wrote a profile with the real `ConfigStore`; a throwaway
+Go program calling upstream's `conf.LoadFromPath`, the exact function
+`WireGuardTunnelService` calls, loaded it: name `aegis-d512…`, 1 peer, allowed IPs
+`0.0.0.0/0`, endpoint `192.0.2.1:51820`, 1 address, 1 DNS, private key present
+(not printed). So our DPAPI parameters and the `# aegis-profile-id` comment line
+are accepted by WireGuard's real code. Negative controls with the same loader: the
+same blob renamed to another tunnel name fails with "input name does not match the
+stored name"; a truncated blob fails with "The data is invalid". Test keys are the
+public WireGuard documentation examples.
+
+**Not done:** loading `tunnel.dll` itself, DPAPI **as SYSTEM** (the real scope:
+this proved user scope for my account only), a tunnel service under the SCM, the
+wireguard-nt driver install. Those need an elevated shell or the VM.
+
 ## 2026-11-17 — Windows service: encrypted config store and Install/Load/Uninstall, unelevated
 
 Windows 11 Pro, normal user (not SYSTEM). `aegis-service`: 20 tests pass (8 pipe,

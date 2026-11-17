@@ -199,7 +199,7 @@ installs `WireGuardTunnel$<name>` (own-process, auto start, depends on `Nsi` and
 `WireGuardTunnelService(LPCWSTR)`. `<name>` is `aegis-` + 24 hex of the profile
 id (32-char WireGuard limit; service names are case-insensitive); only names of
 exactly that shape are ever touched (`names`, unit-tested).
-*Secrets (resolved by reading wireguard-windows `6ece77b`, 2026-09-22; not yet run).*
+*Secrets (read from wireguard-windows `6ece77b`, 2026-09-22; format verified against its real loader as a normal user, not yet as SYSTEM).*
 `WireGuardTunnelService(conf)` calls `conf.LoadFromPath`, which accepts either a
 plaintext `<name>.conf` or **`<name>.conf.dpapi`**. For `.dpapi` it calls
 `CryptUnprotectData` (flags `CRYPTPROTECT_UI_FORBIDDEN` only: user scope of the
@@ -216,8 +216,9 @@ Administrators DACL, and an existing one is accepted only if its owner is SYSTEM
 or Administrators and its DACL matches exactly, because `ProgramData` lets any
 user pre-create a folder and then swap a config. The service re-parses and
 re-validates every `Install` itself and stores the validated canonical form. `aegis-<24 hex>` passes `TunnelNameIsValid`
-(`^[a-zA-Z0-9_=+.-]{1,32}$`, no `$`). To verify on a machine: build `tunnel.dll`,
-encrypt a config as SYSTEM, start the tunnel service, and check it loads.
+(`^[a-zA-Z0-9_=+.-]{1,32}$`, no `$`). Verified: a file written by our `ConfigStore`
+is loaded by upstream's `conf.LoadFromPath` (positive and two negative controls,
+TEST_RESULTS). Still to verify: encrypt as SYSTEM and start the real tunnel service.
 *The official tunnel firewall is not our kill switch (source read, not tested).*
 `enableFirewall` runs only when the config has exactly one peer, no `Table = off`
 and an AllowedIPs entry that is a masked `/0`. It then installs, in a **dynamic**

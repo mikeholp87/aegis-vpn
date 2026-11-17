@@ -33,7 +33,8 @@ Legend: [x] done and verified · [~] implemented, not fully verified · [ ] not 
 - [x] `services/windows-service` pipe server: explicit DACL, first-instance flag, bounded connections, tested unelevated (8 tests). Handler is a `Skeleton` that reports everything `Unsupported`
 - [ ] Run the service as LocalSystem under the SCM (`aegis-service service`) and re-test the pipe as SYSTEM; per-connection client check
 - [x] DPAPI config store in the `tunnel.dll` format (`<name>.conf.dpapi`), directory ACL verified, service-side re-validation: tested unelevated; not yet as SYSTEM or read by `tunnel.dll`
-- [ ] Build `tunnel.dll`/`wireguard.dll` (needs Go), install `WireGuardTunnel$aegis-…` via SCM, status/handshake
+- [~] `tunnel.dll` built locally from upstream source and `wireguard.dll` fetched (hashes in TEST_RESULTS); not yet loaded; CI build and pinning still to do
+- [ ] Install `WireGuardTunnel$aegis-…` via SCM (needs elevation), confirm `tunnel.dll` reads our `.conf.dpapi`, status/handshake
 - [ ] tunnel.dll + wireguard.dll build in CI, NSIS install/uninstall hooks
 - [ ] Windows kill switch (WFP, own provider/sublayer), DNS/IPv6 verification, sleep/resume, network change
 
