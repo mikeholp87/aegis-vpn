@@ -2,6 +2,31 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-17 — `aegis-tunnel` host exe: argument rules and loading tunnel.dll, unelevated
+
+New `aegis-tunnel.exe` (what each `WireGuardTunnel$aegis-…` service will run:
+`/service <config>`). `fmt`, `clippy --workspace --all-targets -D warnings`,
+`cargo test --workspace` pass; `aegis-service` tests: 8 pipe, 4 service, 8 store,
+3 tunnel-host (+1 ignored, run explicitly below).
+- Argument rules: only `/service <absolute path>` to a file named exactly
+  `aegis-<24 hex>.conf.dpapi` directly inside the Aegis config directory is accepted
+  (directory compared case-insensitively, file name exactly). Refused: no or extra
+  arguments, other flags, relative paths, `..`, another directory or subdirectory,
+  plaintext `.conf`, `wg0.conf.dpapi`, trailing `.exe`, empty stem, upper-case names.
+- Loader failure paths: relative path, missing file, and `kernel32.dll` (no
+  `WireGuardTunnelService` export) are all refused with errors; nothing is called.
+- **Real `tunnel.dll`** (`AEGIS_TUNNEL_DLL=… cargo test … -- --include-ignored`):
+  loads by absolute path with `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
+  LOAD_LIBRARY_SEARCH_SYSTEM32` and the export resolves. It was NOT called.
+- **Defect found:** with `FreeLibrary` in `Drop`, the test process exited with
+  `STATUS_ACCESS_VIOLATION` after the tests passed (1 crash). A Go c-shared DLL
+  cannot be unloaded safely. I removed the unload; 3 consecutive runs then exit 0.
+  (Removal is the only change; I did not isolate the crash further.)
+
+**Not run:** calling `WireGuardTunnelService` (needs the SCM), the SCM install of
+the tunnel service, `SERVICE_SID_TYPE_UNRESTRICTED`, DLL search behaviour with a
+planted DLL, running as SYSTEM.
+
 ## 2026-11-17 — tunnel.dll and wireguard.dll built/fetched (not loaded or run)
 
 Go 1.27.4 (official zip, SHA-256 matched go.dev's published value) extracted to

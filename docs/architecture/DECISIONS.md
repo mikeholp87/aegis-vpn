@@ -199,6 +199,14 @@ installs `WireGuardTunnel$<name>` (own-process, auto start, depends on `Nsi` and
 `WireGuardTunnelService(LPCWSTR)`. `<name>` is `aegis-` + 24 hex of the profile
 id (32-char WireGuard limit; service names are case-insensitive); only names of
 exactly that shape are ever touched (`names`, unit-tested).
+*Tunnel host (implemented, loads tested, not run under the SCM).* Each tunnel
+service runs `aegis-tunnel.exe /service <…\aegis-<24 hex>.conf.dpapi>`
+(`services/windows-service`, `tunnel_host` + `tunnel_dll`). It restricts the process
+DLL search (`SetDefaultDllDirectories`), validates that the argument is exactly one
+of our encrypted configs in our directory, and loads `tunnel.dll` from its own
+directory by absolute path with `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
+LOAD_LIBRARY_SEARCH_SYSTEM32`. **Never `FreeLibrary` it:** a Go c-shared DLL
+crashed the process with `STATUS_ACCESS_VIOLATION` when unloaded (measured).
 *Secrets (read from wireguard-windows `6ece77b`, 2026-09-22; format verified against its real loader as a normal user, not yet as SYSTEM).*
 `WireGuardTunnelService(conf)` calls `conf.LoadFromPath`, which accepts either a
 plaintext `<name>.conf` or **`<name>.conf.dpapi`**. For `.dpapi` it calls

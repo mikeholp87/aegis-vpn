@@ -34,7 +34,8 @@ Legend: [x] done and verified · [~] implemented, not fully verified · [ ] not 
 - [ ] Run the service as LocalSystem under the SCM (`aegis-service service`) and re-test the pipe as SYSTEM; per-connection client check
 - [x] DPAPI config store in the `tunnel.dll` format (`<name>.conf.dpapi`), directory ACL verified, service-side re-validation: tested unelevated; not yet as SYSTEM or read by `tunnel.dll`
 - [~] `tunnel.dll` built locally from upstream source and `wireguard.dll` fetched (hashes in TEST_RESULTS); not yet loaded; CI build and pinning still to do
-- [ ] Install `WireGuardTunnel$aegis-…` via SCM (needs elevation), confirm `tunnel.dll` reads our `.conf.dpapi`, status/handshake
+- [x] `aegis-tunnel.exe` host: argument rules, safe absolute-path load of the real `tunnel.dll` (not called yet)
+- [ ] Install `WireGuardTunnel$aegis-…` via SCM (needs elevation), run `tunnel.dll` as SYSTEM on our `.conf.dpapi`, status/handshake
 - [ ] tunnel.dll + wireguard.dll build in CI, NSIS install/uninstall hooks
 - [ ] Windows kill switch (WFP, own provider/sublayer), DNS/IPv6 verification, sleep/resume, network change
 
