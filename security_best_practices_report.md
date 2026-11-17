@@ -3,6 +3,25 @@
 Date: 2026-11-16  
 Revision reviewed: `b93f017270cb58b9f2da64e0086a7260ab2bf239`
 
+## Integration follow-up — 2026-11-17
+
+The later kill-switch integration added two gaps in the core engine: cancelling
+a reconnect removed the block even after failed teardown, and recovery could
+adopt/reactivate a tunnel based on helper support without an installed block.
+Both were reproduced with failing regression tests and fixed. Cancellation
+now preserves the block on teardown failure; activation, startup adoption and
+status reconciliation require an installed block when the kill switch is
+requested. An existing unprotected tunnel remains `Uncertain` until the user
+disconnects; a subsequent Connect installs the block normally.
+
+Combined working-tree validation passed 100 Rust, 27 frontend and two optimized
+GLib tests, Clippy, TypeScript, formatting and frontend lint. A new VM run was attempted
+but could not start because `/dev/kvm` is absent; earlier live results below
+remain scoped to their recorded snapshots. See
+[TEST_RESULTS.md](docs/testing/TEST_RESULTS.md). This follow-up leaves the
+other session's IPv6 implementation untouched and does not independently
+audit the new privileged helper. GLib and library-buffer limits below remain.
+
 ## Implementation status — 2026-11-16
 
 The findings below describe the original audit snapshot. The working tree now

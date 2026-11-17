@@ -50,6 +50,35 @@ pub trait VpnBackend: Send + Sync + 'static {
     /// Active check of the running tunnel (route lookups, resolver state).
     /// The engine calls it on every status poll while connected and shows
     /// its result instead of [`Self::protection`]. Default: no active check.
+    /// OS events (resume, network switch) for the engine to react to. Called
+    /// once at start-up; `None` means this backend cannot observe them.
+    fn system_events(&self) -> Option<tokio::sync::mpsc::Receiver<crate::SystemEvent>> {
+        None
+    }
+
+    /// Kill switch: block all traffic except loopback, tunnel `id`'s
+    /// interface, UDP to `endpoints`, DHCP and IPv6 neighbour discovery (and
+    /// private/link-local ranges when `allow_lan`). Replaces an existing block
+    /// atomically; returns only once the rules are in place, never half-applied.
+    /// The block must survive app crashes (it lives in the kernel).
+    ///
+    /// These three have no default on purpose: a wrapper or new backend that
+    /// forgets to forward them must fail to compile, not silently lose the
+    /// kill switch.
+    fn apply_kill_switch(
+        &self,
+        id: ProfileId,
+        endpoints: &[std::net::SocketAddr],
+        allow_lan: bool,
+    ) -> impl Future<Output = Result<()>> + Send;
+
+    /// Remove the kill switch block. Removing when none exists is not an error.
+    fn remove_kill_switch(&self) -> impl Future<Output = Result<()>> + Send;
+
+    /// Whether a block is installed right now, for example one left by a
+    /// previous run of the app.
+    fn kill_switch_active(&self) -> impl Future<Output = bool> + Send;
+
     /// Light check that the server side can reach the internet, run when the
     /// tunnel comes up and then once a minute. Default: not tested (`Off`).
     fn check_reachability(

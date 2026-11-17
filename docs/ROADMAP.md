@@ -27,16 +27,26 @@ Legend: [x] done and verified · [~] implemented, not fully verified · [ ] not 
 - [ ] React to NM signals instead of 2 s polling
 
 ## Phase D: Windows
-- [!] No Windows 11 machine available; stub backend reports "not implemented"
-- [ ] `services/windows-service`, named pipe IPC, DPAPI, tunnel.dll build in CI, NSIS hooks
+- [!] No Windows 11 machine available: nothing below has run on Windows (DECISIONS D16). Handoff: docs/development/WINDOWS_HANDOFF.md
+- [x] Pipe protocol (`aegis-windows::proto`) and tunnel naming (`names`): unit-tested on the Linux host
+- [~] `ServiceBackend` pipe client: compiles for x86_64-pc-windows-msvc, never run
+- [ ] `services/windows-service`: pipe server + DACL, DPAPI store, `WireGuardTunnel$aegis-…` install via SCM, status/handshake
+- [ ] tunnel.dll + wireguard.dll build in CI, NSIS install/uninstall hooks
+- [ ] Windows kill switch (WFP, own provider/sublayer), DNS/IPv6 verification, sleep/resume, network change
 
 ## Phase E: security
-- [ ] `aegis-helper` (Polkit, SO_PEERCRED) with nftables `inet aegis_vpn` kill switch
+- [~] `aegis-helper` (pkexec + Polkit) with nftables `inet aegis_vpn` kill switch (DECISIONS D14); VM results in TEST_RESULTS
+- [ ] Ship the helper and Polkit policy in deb/rpm bundles (today: `scripts/install-helper.sh`)
+- [ ] Kill switch: forward chain for containers/VMs, hostname endpoints
 - [ ] Helper: detect leaked NetworkManager anti-spoofing rules for the active tunnel address and warn in Diagnostics/Dashboard; never remove them (DECISIONS D11)
 - [ ] Report the NM rule leak upstream (check whether NM ≥1.52.2 / 1.58 still has it)
-- [ ] DNS/IPv6 leak verification (VM)
+- [x] DNS/IPv6 leak protection: IPv6 blocked on IPv4-only full tunnels, runtime `Verified`/`Failed` checks, VM-tested (122/122, Debian 13, 2026-11-16; DECISIONS D12)
+- [x] Internet reachability: tunnel-DNS lookup on connect and every 60 s, VM-tested positive and negative (DECISIONS D13)
+- [ ] DNS/IPv6 verification on Ubuntu/Fedora (resolved and plain resolv.conf setups)
 - [x] QEMU VM harness (`scripts/vm/`): full-tunnel, DNS/IPv6 leak, reconnect, NM-restart and restore checks; **89/89 pass** on Debian 13 (2026-11-16)
-- [ ] Extend VM suite: suspend/resume, reboot with tunnel up, uplink change; Ubuntu and Fedora images
+- [x] Network switch (real NM primary-connection change) and silent-server handling, VM-tested; resume logic unit-tested (DECISIONS D15)
+- [ ] Real suspend/resume and Wi-Fi roaming on hardware; re-activate the tunnel when NoResponse follows a network change if NM keeps a stale endpoint route
+- [ ] Extend VM suite: reboot with tunnel up; Ubuntu and Fedora images
 
 ## Phase F: distribution
 - [~] Tauri bundle config for deb/rpm/nsis; never built
@@ -55,7 +65,7 @@ Per-app split tunnelling, advanced DNS, profile groups, backups, provisioning.
   unit/interface checks pass, extended VM switching test not run here (no /dev/kvm)
 - [~] Isolated Linux VPN CI workflow added; manually triggered, not executed this session
 - [ ] Windows privileged service and real Windows integration acceptance
-- [ ] Continuous kill switch/protected switching, suspend/resume/reboot/uplink-change matrix
+- [ ] Protected country switching with continuous transition protection; suspend/resume/reboot/uplink-change matrix
 - [ ] Supported RTT sampler, public multi-country controlled-server matrix, independent security audit
 
 See `docs/features/LOCATIONS.md`; the full cross-platform acceptance criteria

@@ -331,8 +331,11 @@ pub struct Settings {
     pub reconnect_max_attempts: u32,
     /// Requested by the user. Connecting fails if it cannot be established.
     pub kill_switch: bool,
+    /// While the kill switch blocks, still allow private and link-local
+    /// ranges (printers, NAS, router). Off by default.
+    pub kill_switch_allow_lan: bool,
     pub notifications: bool,
-    /// Opt-in: DNS reachability lookup through the configured tunnel resolver.
+    /// User-controllable DNS checks through the configured tunnel resolver.
     pub connectivity_check: bool,
     pub check_updates: bool,
 }
@@ -350,6 +353,7 @@ impl Default for Settings {
             auto_reconnect: true,
             reconnect_max_attempts: 8,
             kill_switch: false,
+            kill_switch_allow_lan: false,
             notifications: true,
             connectivity_check: true,
             check_updates: false,
@@ -364,4 +368,14 @@ pub enum EngineEvent {
     Snapshot(Box<Snapshot>),
     Log(LogEntry),
     ProfilesChanged,
+}
+
+/// Something the operating system told the backend that the engine must react to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemEvent {
+    /// The computer woke from sleep or hibernation.
+    Resumed,
+    /// The way to the server may have changed (another Wi-Fi network, cable
+    /// plugged in, primary connection switched).
+    NetworkChanged,
 }

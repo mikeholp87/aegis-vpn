@@ -157,21 +157,71 @@ pub fn judge_dns(
     }
 }
 
-pub fn judge_ipv6(route: RouteKind, probe: RouteProbe) -> Feature {
-    match (route, probe) {
-        (RouteKind::Full, RouteProbe::Tunnel) => {
+/// The IPv6 default route the kernel prefers (lowest metric), from
+/// `/proc/net/ipv6_route` (world-readable, lists every table).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefaultV6 {
+    pub dev: String,
+    /// `unreachable`/`blackhole`/`prohibit` route (RTF_REJECT).
+    pub reject: bool,
+}
+
+pub fn ipv6_default_route(proc_ipv6_route: &str) -> Option<DefaultV6> {
+    const RTF_REJECT: u32 = 0x0200;
+    proc_ipv6_route
+        .lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            let default = f.len() >= 10 && f[0].bytes().all(|b| b == b'0') && f[1] == "00";
+            default.then_some(())?;
+            let metric = u32::from_str_radix(f[5], 16).ok()?;
+            let flags = u32::from_str_radix(f[8], 16).ok()?;
+            Some((
+                metric,
+                DefaultV6 {
+                    dev: f[9].to_owned(),
+                    reject: flags & RTF_REJECT != 0,
+                },
+            ))
+        })
+        .min_by_key(|(metric, _)| *metric)
+        .map(|(_, d)| d)
+}
+
+/// `probe` alone cannot see a tunnel route without a tunnel IPv6 address
+/// (the kernel then picks the uplink's source address), so the preferred
+/// default route is checked too.
+pub fn judge_ipv6(
+    route: RouteKind,
+    probe: RouteProbe,
+    default: Option<&DefaultV6>,
+    tunnel_iface: Option<&str>,
+) -> Feature {
+    if matches!(route, RouteKind::FullIpv6Only | RouteKind::Split) {
+        return Feature::Off;
+    }
+    let into_tunnel = default.is_some_and(|d| Some(d.dev.as_str()) == tunnel_iface && !d.reject);
+    match probe {
+        RouteProbe::Tunnel if route == RouteKind::Full => {
             Feature::Verified("IPv6 internet traffic is routed through the tunnel".into())
         }
-        (RouteKind::Full | RouteKind::FullIpv4Only, RouteProbe::Unreachable) => Feature::Verified(
+        RouteProbe::Tunnel => Feature::Verified(DROPPED_V6.into()),
+        RouteProbe::Unreachable => Feature::Verified(
             "IPv6 is blocked while connected: there is no IPv6 route outside the tunnel".into(),
         ),
-        (RouteKind::Full | RouteKind::FullIpv4Only, _) => Feature::Failed(
+        RouteProbe::Outside if into_tunnel => Feature::Verified(DROPPED_V6.into()),
+        RouteProbe::Outside if default.is_some_and(|d| d.reject) => Feature::Verified(
+            "IPv6 is blocked while connected: there is no IPv6 route outside the tunnel".into(),
+        ),
+        RouteProbe::Outside => Feature::Failed(
             "IPv6 traffic leaves outside the tunnel. Reconnect so Aegis can block it, or add IPv6 to the profile."
                 .into(),
         ),
-        (RouteKind::FullIpv6Only | RouteKind::Split, _) => Feature::Off,
     }
 }
+
+const DROPPED_V6: &str =
+    "IPv6 is sent into the tunnel, which does not carry it, so it is dropped while connected";
 
 /// Name looked up by the reachability check. Reserved by RFC 2606 and run by
 /// IANA, so the lookup reveals nothing about the user.
@@ -395,23 +445,91 @@ mod tests {
     #[test]
     fn ipv6_verified_only_through_tunnel_or_blocked() {
         use RouteKind::*;
-        assert!(matches!(
-            judge_ipv6(Full, RouteProbe::Tunnel),
-            Feature::Verified(_)
-        ));
-        assert!(matches!(
-            judge_ipv6(Full, RouteProbe::Outside),
-            Feature::Failed(_)
-        ));
-        assert!(matches!(
-            judge_ipv6(FullIpv4Only, RouteProbe::Unreachable),
-            Feature::Verified(_)
-        ));
-        assert!(matches!(
-            judge_ipv6(FullIpv4Only, RouteProbe::Outside),
-            Feature::Failed(_)
-        ));
-        assert_eq!(judge_ipv6(Split, RouteProbe::Outside), Feature::Off);
+        let tun = Some("aegis-0b1e8a3c");
+        let via = |dev: &str| DefaultV6 {
+            dev: dev.into(),
+            reject: false,
+        };
+        let uplink = via("ens3");
+        let into_tunnel = via("aegis-0b1e8a3c");
+        let v = |f: Feature| matches!(f, Feature::Verified(_));
+        let failed = |f: Feature| matches!(f, Feature::Failed(_));
+
+        assert!(v(judge_ipv6(
+            Full,
+            RouteProbe::Tunnel,
+            Some(&into_tunnel),
+            tun
+        )));
+        assert!(failed(judge_ipv6(
+            Full,
+            RouteProbe::Outside,
+            Some(&uplink),
+            tun
+        )));
+        assert!(v(judge_ipv6(
+            FullIpv4Only,
+            RouteProbe::Unreachable,
+            None,
+            tun
+        )));
+        // No tunnel IPv6 address: uplink source, but the route goes into the tunnel.
+        assert!(v(judge_ipv6(
+            FullIpv4Only,
+            RouteProbe::Outside,
+            Some(&into_tunnel),
+            tun
+        )));
+        assert!(failed(judge_ipv6(
+            FullIpv4Only,
+            RouteProbe::Outside,
+            Some(&uplink),
+            tun
+        )));
+        assert!(failed(judge_ipv6(
+            FullIpv4Only,
+            RouteProbe::Outside,
+            None,
+            tun
+        )));
+        // Unknown tunnel interface never counts as "into the tunnel".
+        assert!(failed(judge_ipv6(
+            FullIpv4Only,
+            RouteProbe::Outside,
+            Some(&into_tunnel),
+            None
+        )));
+        assert_eq!(
+            judge_ipv6(Split, RouteProbe::Outside, Some(&uplink), tun),
+            Feature::Off
+        );
+    }
+
+    #[test]
+    fn ipv6_default_route_picks_lowest_metric() {
+        // Lines as the kernel prints them (VM, IPv4-only tunnel connected).
+        let text = "\
+00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000002 00000064 00000001 00000000 00450003     ens3
+00000000000000000000000000000000 00 00000000000000000000000000000000 00 00000000000000000000000000000000 00000001 00000001 00000000 00000001 aegis-0b1e8a3c
+fe800000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000001 00000000 00000001     ens3
+00000000000000000000000000000000 00 00000000000000000000000000000000 00 00000000000000000000000000000000 ffffffff 00000001 00000000 00200200       lo
+";
+        assert_eq!(
+            ipv6_default_route(text),
+            Some(DefaultV6 {
+                dev: "aegis-0b1e8a3c".into(),
+                reject: false
+            })
+        );
+        let only_reject = text.lines().last().unwrap();
+        assert_eq!(
+            ipv6_default_route(only_reject),
+            Some(DefaultV6 {
+                dev: "lo".into(),
+                reject: true
+            })
+        );
+        assert_eq!(ipv6_default_route(text.lines().nth(2).unwrap()), None);
     }
 
     #[test]

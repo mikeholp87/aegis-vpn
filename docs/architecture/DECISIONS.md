@@ -75,13 +75,19 @@ equivalent. *Also:* report upstream after checking current NM releases.
 
 ### D12. DNS and IPv6 protection: block, then verify at runtime (2026-11-16)
 *IPv6:* an IPv4 full tunnel that does not carry IPv6 gets an NM-owned
-`unreachable ::/0` route (metric 1, `ipv6.method=manual` without addresses;
-tested on NM 1.52) instead of leaking. NM removes it on disconnect, so no
-firewall or root is needed. Connections installed before this are refreshed
-on activation (`settings::lacks_ipv6_block`).
+`::/0` route on the tunnel device (metric 1, `ipv6.method=manual` without
+addresses; tested on NM 1.52) instead of leaking. WireGuard has no IPv6 peer,
+so it drops that traffic. No firewall or root is needed. A `type=unreachable`
+route was tried first and rejected: it lives on `lo`, and after an NM restart
+while connected NM left it behind on disconnect (IPv6 stayed blocked). A
+device route is removed by the kernel with the interface. Connections
+installed earlier are refreshed on activation (`settings::lacks_ipv6_block`).
 *Verification:* while connected, every status poll runs unprivileged checks
 (`aegis-linux/src/verify.rs`): a UDP `connect()` route lookup (no packets
-sent) must pick a tunnel source address or fail with no route; DNS servers
+sent) must pick a tunnel source address, fail with no route, or the
+lowest-metric default route in `/proc/net/ipv6_route` must be the tunnel
+device (needed because without a tunnel IPv6 address the kernel picks the
+uplink's source address). Assumes no foreign IPv6 policy rules. DNS servers
 must route through the tunnel, and systemd-resolved's `Domains` must give the
 `~.` catch-all to the tunnel link only (or `/etc/resolv.conf` must list only
 tunnel servers). Pass ⇒ `Verified`, otherwise `Failed`. This checks routing
@@ -102,7 +108,7 @@ resolver cache may answer, so it proves the far end's resolver works, not
 that arbitrary internet hosts are reachable. Chosen over an opt-in TCP check
 to a user host, which would contact a third party.
 
-### D14. Locations are metadata on existing profiles (2026-11-16)
+### D15. Locations are metadata on existing profiles (2026-11-16)
 One ProfileId represents one server entry, including multi-peer configurations.
 `ProfileMeta.server` stores additive serde-default location/preferences/history;
 endpoints, AllowedIPs, credentials and connection lifecycle remain in their
@@ -119,3 +125,91 @@ switches are refused because the current backends provide no continuous kill
 switch. A failed destination stays explicitly failed after cleanup rather than
 automatically activating another profile. Revisit Windows and protected switching
 only with a tested privileged service/helper and controlled live-platform tests.
+
+### D14. Kill switch: pkexec one-shot root helper, session-scoped (user, 2026-11-16)
+`services/linux-helper` (`aegis-helper`, std-only, no dependencies) is the
+only code that runs as root. The app starts it through pkexec; the Polkit
+action `org.aegisvpn.helper.killswitch` allows the active local user without
+a password (`auth_admin` otherwise). It manages one nftables table,
+`inet aegis_vpn` (output and input chains, policy drop, priority filter-10),
+in a single atomic transaction, reads it back before reporting success, and
+writes `/run/aegis-vpn/kill-switch` so the unprivileged app can see a block
+after a crash. Arguments are strictly validated (`aegis-<8 hex>` interface,
+1–16 `IP:port` endpoints); `nft` runs by absolute path with a clean env.
+Allowed while blocking: loopback, the tunnel interface, UDP to the endpoints,
+DHCPv4/v6, IPv6 neighbour discovery; with *Allow local network* also
+private/link-local/multicast ranges. Outbound has no `established`
+exception, so connections opened before the block cannot continue outside
+the tunnel after a drop.
+*Lifetime:* applied before activation (nothing can slip out while the
+tunnel comes up) and kept through drops, reconnects, failed attempts, NM
+restarts and app crashes; removed only by Disconnect/Cancel ("Stop blocking"
+in the UI). Settings cannot change mid-session.
+*Limits:* endpoints must be IP literals (a name cannot be resolved while
+blocked; such profiles are refused with a fix-it message). Forwarded traffic
+(containers, VMs) is not covered: no forward chain. Rules vanish on reboot
+with the marker, so the block does not persist across reboots. Protected
+profile switching stays refused. *Alternatives:* systemd root service
+(rejected: permanent root process and socket). *Revisit:* forward chain,
+hostname endpoints, Windows (WFP).
+
+### D15. Sleep/resume, network switching and a silent server (2026-11-17)
+*Events.* `aegis-linux/src/events.rs` watches the system D-Bus for logind's
+`PrepareForSleep(false)` (⇒ `SystemEvent::Resumed`) and for NetworkManager's
+`PrimaryConnection` property changing (⇒ `NetworkChanged`: other Wi-Fi, cable
+plugged or removed, different uplink). The engine collapses a burst (a real
+switch emitted three at once) into one reaction after 3 s, ignores network
+events for 15 s after its own activation, and only reacts while a session is up.
+The property stream also delivers the current value on subscribe; that first
+event is harmless for the same reason.
+*Reaction.* The tunnel is not torn down: WireGuard roams and re-handshakes on
+its own, and the kill switch is not touched. Proof of a response from *before*
+the event stops counting: peer goes back to `Pending` until a handshake newer
+than the event or newly received bytes arrive; reachability, public IP and
+protection checks are cleared and re-run. Bringing the tunnel up with a stale
+"Confirmed" would be a lie after a network change.
+*Resume.* The engine remembers the profile of a session that came up
+(`session`, cleared by Disconnect/Cancel). If it ended as `Failed` (retries ran
+out while asleep) and automatic reconnection is on, a resume starts one fresh
+connect, which re-applies the kill-switch block. A session the user ended, or
+one that never came up, is never revived. With auto-reconnect off nothing is
+restarted.
+*Silent server.* Independent of OS events: data sent for 30 s with nothing
+received flips a confirmed peer to `NoResponse` ("The server stopped
+answering…"); it returns to `Confirmed` when anything arrives. WireGuard
+answers received data with a keepalive within ~10 s, so this does not fire on
+an idle tunnel. The tunnel and the block are kept.
+*Not verified.* A real suspend (a VM cannot suspend like hardware), a real
+Wi-Fi roam, and whether NetworkManager re-adds the endpoint route after a real
+uplink change: if it does not, the dashboard shows `NoResponse` but Aegis does
+not yet re-activate the tunnel by itself. *Revisit:* re-activate (keeping the
+block) when `NoResponse` follows a network change.
+
+## D16: Windows backend design (2026-11-17, partly implemented, none run on Windows)
+
+*Shape.* The app (unprivileged) holds `ServiceBackend`, a client of a LocalSystem
+service over the named pipe `\\.\pipe\aegis-vpn-service`: one 4-byte length +
+JSON frame per request/reply (`aegis-windows::proto`, 1 MiB-class bound checked
+before allocation, `SecretText` has a redacted `Debug`). The service is the only
+privileged code on Windows, like `aegis-helper` on Linux.
+*Tunnels.* Official WireGuard embeddable-dll-service, per its README: the service
+installs `WireGuardTunnel$<name>` (own-process, auto start, depends on `Nsi` and
+`TcpIp`, `SERVICE_SID_TYPE_UNRESTRICTED`) running our exe as `<exe> /service
+<conf>`, which loads `tunnel.dll` by absolute path and calls the exported
+`WireGuardTunnelService(LPCWSTR)`. `<name>` is `aegis-` + 24 hex of the profile
+id (32-char WireGuard limit; service names are case-insensitive); only names of
+exactly that shape are ever touched (`names`, unit-tested).
+*Secrets.* Configs live in the service's ProgramData directory, DPAPI-encrypted
+(machine scope, since the service is LocalSystem), ACL SYSTEM + Administrators.
+The README does not say whether `tunnel.dll` reads encrypted configs, so the
+plan assumes a plaintext `.conf` exists only while the tunnel runs, in a
+SYSTEM-only directory, deleted at stop and at service start. **Unverified;
+decide when a Windows machine can confirm.**
+*Pipe security (planned).* DACL grants access to the interactive logged-on
+users, not Everyone; the service checks the client SID on every connection.
+*Kill switch (planned).* WFP filters under an Aegis-owned provider and sublayer,
+persistent so they can outlive the app and be removed by provider key. No
+firewall `netsh` shelling.
+*Not done.* The service, DPAPI, SCM install, WFP, verification of DNS/IPv6
+protection, sleep/resume and network change on Windows. `protection()` reports
+`Off` until the service can verify, so nothing is claimed.

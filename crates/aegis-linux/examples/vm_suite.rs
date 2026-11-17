@@ -190,15 +190,22 @@ async fn main() {
         );
     } else {
         step(
-            "IPv6 blocked on an IPv4-only full tunnel (no route outside it)",
-            r6.contains("No route to host") || r6.contains("unreachable"),
+            "IPv6 on an IPv4-only full tunnel is routed into the tunnel (dropped there)",
+            r6.contains("dev aegis-"),
             &r6,
         );
-        let (ok, out) = run(&["ping", "-6", "-c", "1", "-W", "2", "2001:db8:ffff::1"]);
+        // Capture on the uplink while pinging: the block must not just fail,
+        // it must keep packets off the local network.
+        let seen = uplink_sees(
+            &uplink,
+            "ip6 and dst 2001:db8:ffff::1",
+            &["ping", "-6", "-c", "2", "-W", "2", "2001:db8:ffff::1"],
+        )
+        .await;
         step(
-            "IPv6 ping to the internet fails",
-            !ok,
-            out.lines().last().unwrap_or(""),
+            &format!("no IPv6 packets on uplink {uplink}"),
+            seen == Some(false),
+            &format!("{seen:?}"),
         );
     }
     // The engine runs the active check on each status poll; give it one.
@@ -213,6 +220,21 @@ async fn main() {
         "IPv6 protection verified at runtime",
         matches!(prot.ipv6, Feature::Verified(_)),
         &format!("{:?}", prot.ipv6),
+    );
+    // Real handshake time: read as root through the helper, not inferred.
+    step(
+        "handshake time readable (helper + wg present)",
+        engine.capabilities().exact_handshake_time.is_supported(),
+        &format!("{:?}", engine.capabilities().exact_handshake_time),
+    );
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
+    let hs = engine.snapshot().stats.and_then(|s| s.last_handshake_ms);
+    step(
+        "last handshake time is real and recent (within 60 s)",
+        hs.is_some_and(|t| t > 0 && now_ms.abs_diff(t) < 60_000),
+        &format!("{hs:?} vs now {now_ms}"),
     );
     let reach = engine.snapshot().reachability;
     step(
@@ -412,6 +434,347 @@ async fn main() {
         &format!("{r:?}"),
     );
 
+    // ---------- kill switch (helper installed by run-vm-tests.sh) ----------
+    step(
+        "kill switch supported (helper, policy, pkexec, nft present)",
+        engine.capabilities().kill_switch.is_supported(),
+        &format!("{:?}", engine.capabilities().kill_switch),
+    );
+    let set_ks = |on: bool, lan: bool| {
+        let mut s = engine.settings();
+        s.kill_switch = on;
+        s.kill_switch_allow_lan = lan;
+        s.auto_reconnect = false;
+        // The monitor holds the operation lock while it checks the tunnel;
+        // a settings change in that moment is refused as Busy, so retry.
+        for _ in 0..20 {
+            match engine.set_settings(s.clone()) {
+                Err(aegis_core::CoreError::Busy) => {
+                    std::thread::sleep(Duration::from_millis(300));
+                }
+                r => return r.map(|_| ()),
+            }
+        }
+        Err(aegis_core::CoreError::Busy)
+    };
+    let ks_table = || root(&["nft", "list", "table", "inet", "aegis_vpn"]).0;
+    // Traffic forced out of the uplink: LAN (slirp gateway) and "internet".
+    let wan_ping = [
+        "ping",
+        "-I",
+        uplink.as_str(),
+        "-c",
+        "2",
+        "-W",
+        "1",
+        "1.1.1.1",
+    ];
+    let lan_seen = || {
+        uplink_sees(
+            &uplink,
+            "icmp and dst 10.0.2.2",
+            &["ping", "-c", "2", "-W", "1", "10.0.2.2"],
+        )
+    };
+    let wan_seen = || uplink_sees(&uplink, "icmp and dst 1.1.1.1", &wan_ping);
+    let r = set_ks(true, false);
+    step(
+        "enable kill switch (LAN blocked)",
+        r.is_ok(),
+        &format!("{r:?}"),
+    );
+    let r = engine.connect(id).await;
+    step("connect with kill switch", r.is_ok(), &format!("{r:?}"));
+    step(
+        "kill switch: server confirmed through the block",
+        wait_confirmed(15).await,
+        &format!("{:?}", engine.snapshot().state),
+    );
+    let ks = engine.snapshot().protection.kill_switch;
+    step(
+        "kill switch reported Verified",
+        matches!(ks, Feature::Verified(_)),
+        &format!("{ks:?}"),
+    );
+    step("nftables table inet aegis_vpn present", ks_table(), "");
+    let (ok, out) = run(&["ping", "-c", "2", "-W", "2", "198.51.100.1"]);
+    step(
+        "kill switch: sentinel reachable through tunnel",
+        ok,
+        out.lines().rev().nth(1).unwrap_or(""),
+    );
+    let seen = wan_seen().await;
+    step(
+        "kill switch: nothing leaves via uplink (forced -I)",
+        seen == Some(false),
+        &format!("{seen:?}"),
+    );
+    let seen = lan_seen().await;
+    step(
+        "kill switch: LAN blocked when not allowed",
+        seen == Some(false),
+        &format!("{seen:?}"),
+    );
+
+    let (ok, out) = root(&["nmcli", "connection", "down", "uuid", &id.to_string()]);
+    step("kill switch: external tunnel drop", ok, &out);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline
+        && !matches!(engine.snapshot().state, ConnectionState::Failed { .. })
+    {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    step(
+        "kill switch: engine reports the drop (auto-reconnect off)",
+        matches!(engine.snapshot().state, ConnectionState::Failed { .. }),
+        &format!("{:?}", engine.snapshot().state),
+    );
+    step("kill switch: still blocking after the drop", ks_table(), "");
+    let seen = wan_seen().await;
+    step(
+        "kill switch: nothing leaves after the drop",
+        seen == Some(false),
+        &format!("{seen:?}"),
+    );
+
+    let r = engine.disconnect().await;
+    step("kill switch: disconnect", r.is_ok(), &format!("{r:?}"));
+    step("kill switch: table removed on disconnect", !ks_table(), "");
+    let seen = wan_seen().await;
+    step(
+        "control: uplink traffic visible once unblocked",
+        seen == Some(true),
+        &format!("{seen:?}"),
+    );
+
+    let r = set_ks(true, true);
+    step(
+        "enable kill switch with local network allowed",
+        r.is_ok(),
+        &format!("{r:?}"),
+    );
+    let r = engine.connect(id).await;
+    step(
+        "connect with kill switch + LAN",
+        r.is_ok(),
+        &format!("{r:?}"),
+    );
+    wait_confirmed(15).await;
+    let seen = lan_seen().await;
+    step(
+        "allow LAN: local network reachable",
+        seen == Some(true),
+        &format!("{seen:?}"),
+    );
+    let seen = wan_seen().await;
+    step(
+        "allow LAN: internet still blocked outside tunnel",
+        seen == Some(false),
+        &format!("{seen:?}"),
+    );
+    let r = engine.disconnect().await;
+    step(
+        "kill switch + LAN: disconnect",
+        r.is_ok(),
+        &format!("{r:?}"),
+    );
+    let r = set_ks(false, false);
+    step("disable kill switch", r.is_ok(), &format!("{r:?}"));
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let diff = diff_lines(&baseline, &net_state());
+    step(
+        "nothing left after kill switch",
+        diff.is_empty(),
+        &diff.join(" | "),
+    );
+
+    // ---------- network switch and a silent server (kill switch on) ----------
+    let logged = |needle: &str| engine.events().iter().any(|l| l.message.contains(needle));
+    let r = set_ks(true, false);
+    step(
+        "enable kill switch for switch/silence tests",
+        r.is_ok(),
+        &format!("{r:?}"),
+    );
+    let r = engine.connect(id).await;
+    step(
+        "connect for switch/silence tests",
+        r.is_ok(),
+        &format!("{r:?}"),
+    );
+    step(
+        "switch/silence tests: server confirmed",
+        wait_confirmed(15).await,
+        &format!("{:?}", engine.snapshot().state),
+    );
+    // The tunnel's own start-up makes NetworkManager noise the engine ignores.
+    tokio::time::sleep(Duration::from_secs(17)).await;
+
+    // Another uplink takes over as primary connection: a real NM event.
+    let (ok, out) = root(&[
+        "nmcli",
+        "connection",
+        "add",
+        "type",
+        "dummy",
+        "ifname",
+        "dum0",
+        "con-name",
+        "dumx",
+        "ipv4.method",
+        "manual",
+        "ipv4.addresses",
+        "10.77.0.2/24",
+        "ipv4.gateway",
+        "10.77.0.1",
+        "ipv4.route-metric",
+        "50",
+        "ipv6.method",
+        "disabled",
+    ]);
+    step("network switch: add a better uplink", ok, &out);
+    let (ok, out) = root(&["nmcli", "connection", "up", "dumx"]);
+    step("network switch: bring it up", ok, &out);
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while Instant::now() < deadline && !logged("The network changed") {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    step(
+        "network switch: engine noticed",
+        logged("The network changed"),
+        "",
+    );
+    step(
+        "network switch: tunnel confirmed again with fresh data",
+        wait_confirmed(25).await,
+        &format!("{:?}", engine.snapshot().state),
+    );
+    let (ok, out) = run(&["ping", "-c", "2", "-W", "2", "198.51.100.1"]);
+    step(
+        "network switch: still routed through tunnel",
+        ok,
+        out.lines().rev().nth(1).unwrap_or(""),
+    );
+    let ks = engine.snapshot().protection.kill_switch;
+    step(
+        "network switch: kill switch still Verified",
+        matches!(ks, Feature::Verified(_)),
+        &format!("{ks:?}"),
+    );
+    let seen = wan_seen().await;
+    step(
+        "network switch: nothing leaves via uplink",
+        seen == Some(false),
+        &format!("{seen:?}"),
+    );
+    let (ok, out) = root(&["nmcli", "connection", "delete", "dumx"]);
+    step("network switch: remove the extra uplink", ok, &out);
+    // Switching back is a second network change: the engine forgets the old
+    // proof again and needs fresh data before it says Confirmed.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    step(
+        "network switch: confirmed again after switching back",
+        wait_confirmed(25).await,
+        &format!("{:?}", engine.snapshot().state),
+    );
+
+    // The server goes quiet while the client keeps sending (server side of the
+    // path dies inside the test namespace; nothing on the host is touched).
+    let mut traffic = std::process::Command::new("ping")
+        .args(["-i", "0.5", "-c", "200", "198.51.100.1"])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("ping");
+    let (ok, out) = root(&[
+        "ip",
+        "netns",
+        "exec",
+        "aegis-peer",
+        "ip",
+        "link",
+        "set",
+        "wg0",
+        "down",
+    ]);
+    step(
+        "silent server: stop the server's WireGuard interface",
+        ok,
+        &out,
+    );
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let silent = |e: &Engine<aegis_linux::NmBackend>| {
+        matches!(
+            e.snapshot().state,
+            ConnectionState::Connected {
+                peer: PeerState::NoResponse,
+                ..
+            }
+        )
+    };
+    while Instant::now() < deadline && !silent(&engine) {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    step(
+        "silent server: engine reports no response, keeps the tunnel",
+        silent(&engine),
+        &format!("{:?}", engine.snapshot().state),
+    );
+    step(
+        "silent server: explained in the log",
+        logged("stopped answering"),
+        "",
+    );
+    step("silent server: kill switch still blocking", ks_table(), "");
+    let seen = wan_seen().await;
+    step(
+        "silent server: nothing leaves via uplink",
+        seen == Some(false),
+        &format!("{seen:?}"),
+    );
+    let (ok, out) = root(&[
+        "ip",
+        "netns",
+        "exec",
+        "aegis-peer",
+        "ip",
+        "link",
+        "set",
+        "wg0",
+        "up",
+    ]);
+    step(
+        "silent server: restart the server's WireGuard interface",
+        ok,
+        &out,
+    );
+    step(
+        "silent server: confirmed again once it answers",
+        wait_confirmed(60).await,
+        &format!("{:?}", engine.snapshot().state),
+    );
+    let _ = traffic.kill();
+    let _ = traffic.wait();
+
+    let r = engine.disconnect().await;
+    step(
+        "switch/silence tests: disconnect",
+        r.is_ok(),
+        &format!("{r:?}"),
+    );
+    let r = set_ks(false, false);
+    step(
+        "switch/silence tests: disable kill switch",
+        r.is_ok(),
+        &format!("{r:?}"),
+    );
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let diff = diff_lines(&baseline, &net_state());
+    step(
+        "nothing left after switch/silence tests",
+        diff.is_empty(),
+        &diff.join(" | "),
+    );
+
     let r = engine.delete(id).await;
     step("delete", r.is_ok(), &format!("{r:?}"));
     let left = engine
@@ -548,6 +911,27 @@ mod checks {
             vec!["(whitespace-only difference)".into()]
         } else {
             out
+        }
+    }
+
+    /// Run `cmd` while capturing `filter` on `iface`. `Some(true)`: a packet
+    /// was seen; `Some(false)`: the capture ran its full 6 s and saw nothing;
+    /// `None`: the capture itself failed, which must never count as "no leak".
+    pub(super) async fn uplink_sees(iface: &str, filter: &str, cmd: &[&str]) -> Option<bool> {
+        let cap = Command::new("sudo")
+            .args([
+                "-n", "timeout", "6", "tcpdump", "-n", "-i", iface, "-c", "1", filter,
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let _ = run(cmd);
+        match cap.wait_with_output().ok()?.status.code() {
+            Some(0) => Some(true),
+            Some(124) => Some(false),
+            _ => None,
         }
     }
 

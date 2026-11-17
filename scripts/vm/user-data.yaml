@@ -20,6 +20,8 @@ packages:
   - nftables
   - iputils-ping
   - iproute2
+  - polkitd
+  - pkexec
 write_files:
   - path: /etc/aegis-test-vm
     content: "Disposable Aegis VPN test VM. vm_suite refuses to run without this file.\n"
@@ -28,7 +30,8 @@ write_files:
       // TEST VM ONLY: give the SSH test user the NetworkManager rights an
       // active local desktop user gets by default.
       polkit.addRule(function (action, subject) {
-        if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 &&
+        if ((action.id.indexOf("org.freedesktop.NetworkManager.") === 0 ||
+             action.id === "org.aegisvpn.helper.killswitch") &&
             subject.user === "aegis") {
           return polkit.Result.YES;
         }

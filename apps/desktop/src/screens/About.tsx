@@ -22,8 +22,26 @@ export function About() {
                   : "None available"}
           </Row>
           <Row label="License">MIT or Apache-2.0</Row>
-          <Row label="Source">github.com/mikeholp87/aegis-vpn</Row>
-          <Row label="Security policy">SECURITY.md in the repository</Row>
+          <Row label="Source">
+            <a
+              className="text-focus underline-offset-2 hover:underline"
+              href="https://github.com/mikeholp87/aegis-vpn"
+              target="_blank"
+              rel="noreferrer"
+            >
+              github.com/mikeholp87/aegis-vpn
+            </a>
+          </Row>
+          <Row label="Security policy">
+            <a
+              className="text-focus underline-offset-2 hover:underline"
+              href="https://github.com/mikeholp87/aegis-vpn/blob/main/SECURITY.md"
+              target="_blank"
+              rel="noreferrer"
+            >
+              SECURITY.md
+            </a>
+          </Row>
         </dl>
       </Panel>
       <Panel title="Acknowledgments">

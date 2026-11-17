@@ -61,6 +61,7 @@ const settings: Settings = {
   auto_reconnect: true,
   reconnect_max_attempts: 8,
   kill_switch: false,
+  kill_switch_allow_lan: false,
   notifications: true,
   connectivity_check: true,
   check_updates: false,
@@ -203,7 +204,7 @@ describe("App", () => {
     await screen.findByRole("heading", { name: "Not connected" });
     expect(screen.getByText("Not tested")).toBeInTheDocument();
     expect(screen.getByText("Last server response")).toBeInTheDocument();
-    expect(screen.getByText("Public IP")).toBeInTheDocument();
+    expect(screen.getByText("DNS resolver egress IPv4")).toBeInTheDocument();
   });
 
   it("shows last server response and public IP when connected", async () => {
@@ -238,6 +239,30 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
   });
 
+  it("says when the kill switch is still blocking and offers to stop it", async () => {
+    const failed = snap({ state: "failed", profile: "p1", reason: "reconnect attempts exhausted" });
+    setup({
+      snapshot: {
+        ...failed,
+        protection: { ...failed.protection, kill_switch: { status: "verified", detail: "blocking" } },
+      },
+    });
+    expect(await screen.findByText(/kill switch is blocking all traffic/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Stop blocking" }));
+    expect(mockApi.disconnect).toHaveBeenCalled();
+  });
+
+  it("explains silence from the server without blaming the config after it worked", async () => {
+    setup({
+      snapshot: snap(
+        { state: "connected", profile: "p1", since_ms: Date.now(), peer: "no_response" },
+        profile,
+      ),
+    });
+    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent("No response from Office");
+    expect(screen.getByText(/network may be down or switched/i)).toBeInTheDocument();
+  });
+
   it("connects the selected profile", async () => {
     setup();
     await userEvent.click(await screen.findByRole("button", { name: "Connect" }));
@@ -265,7 +290,9 @@ describe("App", () => {
   it("requires confirmation before deleting a profile", async () => {
     setup();
     await screen.findByRole("heading", { name: "Not connected" });
-    await userEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "Profiles" }));
+    await userEvent.click(
+      within(screen.getByRole("navigation")).getByRole("button", { name: "Advanced WireGuard" }),
+    );
     await userEvent.click(screen.getByRole("button", { name: "Delete Office" }));
     expect(mockApi.deleteProfile).not.toHaveBeenCalled();
     await userEvent.click(await screen.findByRole("button", { name: "Delete profile", hidden: true }));
@@ -276,7 +303,9 @@ describe("App", () => {
   it("warns that export contains the private key", async () => {
     setup();
     await screen.findByRole("heading", { name: "Not connected" });
-    await userEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "Profiles" }));
+    await userEvent.click(
+      within(screen.getByRole("navigation")).getByRole("button", { name: "Advanced WireGuard" }),
+    );
     await userEvent.click(screen.getByRole("button", { name: "Export Office" }));
     expect(await screen.findByText(/contains the private key/i)).toBeInTheDocument();
     expect(mockApi.exportProfile).not.toHaveBeenCalled();
@@ -312,7 +341,7 @@ describe("Locations", () => {
   it("shows an empty directory with import, add and setup guidance", async () => {
     setup({ profiles: [] });
     await openLocations();
-    expect(screen.getByText("No VPN locations configured")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Import a WireGuard file" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Import WireGuard Configuration" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "View Setup Guide" }));
     expect(screen.getByText(/server must recognize your client public key/i)).toBeInTheDocument();
@@ -332,7 +361,8 @@ describe("Locations", () => {
     await userEvent.click(within(directory).getByRole("button", { name: /^Germany/ }));
     expect(screen.getByRole("heading", { name: "Berlin test" })).toBeInTheDocument();
     expect(screen.getByText("Reachability unknown")).toBeInTheDocument();
-    expect(screen.getByText("Not measured")).toBeInTheDocument();
+    expect(screen.getByText("Not observed")).toBeInTheDocument();
+    expect(screen.queryByText("Not measured")).not.toBeInTheDocument();
   });
 
   it("connects by the stored profile ID and forwards failures", async () => {
@@ -348,12 +378,15 @@ describe("Locations", () => {
     setup({ profiles: [located("SG")] });
     await openLocations();
     await userEvent.click(screen.getByRole("radio", { name: "Favorites" }));
-    expect(screen.getByText(/No servers match/)).toBeInTheDocument();
+    expect(screen.getByText(/No favorite servers yet/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("radio", { name: "All countries" }));
     await userEvent.click(screen.getByRole("button", { name: "Favorite Office" }));
     expect(mockApi.updateServer).toHaveBeenCalledWith("p1", expect.objectContaining({ favorite: true }));
     await userEvent.click(screen.getByRole("radio", { name: "Available servers" }));
-    expect(screen.getByText(/No servers match/)).toBeInTheDocument();
+    expect(screen.getByText(/No servers have answered recently/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Available only lists servers that returned an authenticated WireGuard response/i),
+    ).toBeInTheDocument();
   });
 
   it("imports configuration then saves country metadata without raw keys", async () => {
@@ -406,7 +439,8 @@ describe("Locations", () => {
     setup({ profiles: [located("SG")] });
     await openLocations();
     await userEvent.click(screen.getByLabelText("Manage Office"));
-    await userEvent.click(screen.getByRole("button", { name: "Delete server" }));
+    expect(await screen.findByRole("heading", { name: "Manage Office", hidden: true })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Delete server", hidden: true }));
     expect(mockApi.deleteProfile).not.toHaveBeenCalled();
     const dialog = screen.getByRole("heading", { name: "Delete Office?", hidden: true }).closest("dialog");
     expect(dialog).not.toBeNull();
@@ -414,5 +448,42 @@ describe("Locations", () => {
       within(dialog as HTMLElement).getByRole("button", { name: "Delete server", hidden: true }),
     );
     expect(mockApi.deleteProfile).toHaveBeenCalledWith("p1");
+  });
+});
+
+describe("Locations cancellation and retained protection", () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  it("keeps Cancel enabled while its connection command is pending", async () => {
+    const p = located("SG");
+    setup({ profiles: [p] });
+    let finish = () => {};
+    mockApi.connect.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    await openLocations();
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await act(async () =>
+      engineEvents.listener?.({ type: "snapshot", data: snap({ state: "connecting", profile: p.id }, p) }),
+    );
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(mockApi.cancel).toHaveBeenCalled();
+    await act(async () => finish());
+  });
+
+  it("allows explicitly stopping a retained block after a failed attempt", async () => {
+    const p = located("SG");
+    const snapshot = snap(
+      { state: "failed", profile: p.id, reason: "Destination failed; traffic remains blocked" },
+      p,
+    );
+    snapshot.protection.kill_switch = { status: "verified", detail: "Traffic blocked" };
+    setup({ profiles: [p], snapshot });
+    await openLocations();
+    await userEvent.click(screen.getByRole("button", { name: "Stop blocking" }));
+    expect(mockApi.disconnect).toHaveBeenCalled();
   });
 });

@@ -4,7 +4,7 @@
 
 ```
 ┌──────────── Webview (unprivileged, no secrets) ────────────┐
-│ React UI: Dashboard · Profiles · Activity · Settings ·    │
+│ React UI: Dashboard · Locations · Profiles · Activity ·    │
 │ About. Talks only through typed Tauri commands/events.    │
 └──────────────┬──────────────────────────────▲─────────────┘
        invoke (allow-listed)            "engine" events
@@ -66,8 +66,10 @@ On next start, `recover()` adopts it.
 
 ## Not built yet
 
-Root helper (kill switch, non-NM fallback, exact handshake time), Windows
-service, updater, packaging scripts. See `docs/ROADMAP.md`.
+Non-NM fallback, exact handshake time, Windows service, updater and packaging
+verification. Linux kill-switch work now uses the separately installed
+`aegis-helper` through Polkit/pkexec (see decision D14); protected switching
+remains refused. See `docs/ROADMAP.md`.
 
 ## Locations and registry
 

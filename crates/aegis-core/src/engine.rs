@@ -27,6 +27,12 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Sent traffic with no reply for this long ⇒ `PeerState::NoResponse`.
 const NO_RESPONSE_AFTER: Duration = Duration::from_secs(20);
 const POLL: Duration = Duration::from_secs(2);
+/// Data sent, nothing received, for this long ⇒ the server stopped answering.
+const SILENT_AFTER: Duration = Duration::from_secs(30);
+/// Wait this long after an OS event before reacting, so bursts collapse into one.
+const SETTLE_AFTER_EVENT: Duration = Duration::from_secs(3);
+/// Network events this soon after our own activation are the tunnel's own noise.
+const OWN_ACTIVATION_NOISE: Duration = Duration::from_secs(15);
 /// One small DNS lookup through the tunnel per minute while connected.
 const REACHABILITY_EVERY: Duration = Duration::from_secs(60);
 
@@ -39,6 +45,19 @@ struct Live {
     reachability: Option<(u64, Feature)>,
     /// Last public-IP observation: (at_ms, result). Cleared on disconnect.
     public_ip: Option<(u64, Feature)>,
+    /// Kill-switch rules are installed (confirmed by the backend). Stays true
+    /// across drops, reconnects and failures until the user disconnects.
+    blocking: bool,
+    /// The profile the user is meant to be connected to: set once a tunnel
+    /// came up, cleared by Disconnect/Cancel. Lets a resume from sleep retry a
+    /// dropped session without reconnecting something the user never had up.
+    session: Option<ProfileId>,
+    /// Bumped when the path to the server may have changed (resume, network
+    /// switch): proof of a response from before it no longer counts.
+    path_epoch: u64,
+    path_changed_ms: u64,
+    /// When the tunnel last came up, to ignore the network noise it makes itself.
+    activated_at: Option<tokio::time::Instant>,
     events: VecDeque<LogEntry>,
     profiles: Vec<ProfileMeta>,
     settings: Settings,
@@ -75,6 +94,11 @@ impl<B: VpnBackend> Engine<B> {
                 verified: None,
                 reachability: None,
                 public_ip: None,
+                blocking: false,
+                session: None,
+                path_epoch: 0,
+                path_changed_ms: 0,
+                activated_at: None,
                 events: VecDeque::new(),
                 profiles,
                 settings,
@@ -86,6 +110,10 @@ impl<B: VpnBackend> Engine<B> {
             caps,
         });
         engine.recover().await;
+        if let Some(rx) = engine.backend.system_events() {
+            let weak = Arc::downgrade(&engine);
+            tokio::spawn(Self::system_event_loop(weak, rx));
+        }
         Ok(engine)
     }
 
@@ -157,7 +185,7 @@ impl<B: VpnBackend> Engine<B> {
                 preferred: l.settings.preferred_profile == Some(m.id),
                 active: true,
             });
-        let protection = match (&l.state, &profile) {
+        let mut protection = match (&l.state, &profile) {
             (ConnectionState::Connected { .. }, Some(p)) => l
                 .verified
                 .clone()
@@ -169,6 +197,7 @@ impl<B: VpnBackend> Engine<B> {
             },
             _ => Protection::off(),
         };
+        protection.kill_switch = self.kill_switch_feature(&l, protection.kill_switch);
         let reachability = match (&l.state, &l.reachability) {
             (ConnectionState::Connected { .. }, Some((_, f))) => f.clone(),
             _ => Feature::Off,
@@ -189,6 +218,29 @@ impl<B: VpnBackend> Engine<B> {
             stats: l.stats.clone(),
             profile,
             simulated: self.caps.simulated,
+        }
+    }
+
+    /// The kill switch is the engine's to report: only installed rules count.
+    fn kill_switch_feature(&self, l: &Live, from_backend: Feature) -> Feature {
+        if l.blocking {
+            return Feature::Verified(
+                "blocking all traffic outside the tunnel; the firewall rules were read back after installing"
+                    .into(),
+            );
+        }
+        if !l.settings.kill_switch {
+            return from_backend;
+        }
+        match (&self.caps.kill_switch, &l.state) {
+            (Support::Unsupported(m), _) => Feature::Unsupported(m.clone()),
+            (_, ConnectionState::Uncertain { reason, .. }) => Feature::Failed(reason.clone()),
+            (_, ConnectionState::Connected { .. } | ConnectionState::Reconnecting { .. }) => {
+                Feature::Failed(
+                    "on in Settings but not blocking for this session; disconnect and connect again".into(),
+                )
+            }
+            _ => Feature::Off,
         }
     }
 
@@ -538,10 +590,15 @@ impl<B: VpnBackend> Engine<B> {
 
     pub fn set_settings(&self, mut s: Settings) -> Result<Settings> {
         let _g = self.op_lock.try_lock().map_err(|_| CoreError::Busy)?;
-        if s.kill_switch && !self.caps.kill_switch.is_supported() && !self.live().state.is_idle() {
-            return Err(CoreError::unsupported(
-                "disconnect before enabling the unavailable kill switch; the active session cannot provide it",
-            ));
+        {
+            let l = self.live();
+            let changed = s.kill_switch != l.settings.kill_switch
+                || s.kill_switch_allow_lan != l.settings.kill_switch_allow_lan;
+            if changed && (!l.state.is_idle() || l.blocking) {
+                return Err(CoreError::invalid(
+                    "disconnect before changing the kill switch; it applies from the next connection",
+                ));
+            }
         }
         if let Some(p) = s.preferred_profile
             && self.meta(p).is_err()
@@ -563,6 +620,7 @@ impl<B: VpnBackend> Engine<B> {
         s.favorite_countries.sort();
         s.favorite_countries.dedup();
         s.reconnect_max_attempts = s.reconnect_max_attempts.clamp(1, 50);
+        let preferred_changed = self.live().settings.preferred_profile != s.preferred_profile;
         self.store.save_settings(&s)?;
         {
             let mut l = self.live();
@@ -571,6 +629,9 @@ impl<B: VpnBackend> Engine<B> {
                 l.public_ip = None;
             }
             l.settings = s.clone();
+        }
+        if preferred_changed {
+            let _ = self.tx.send(EngineEvent::ProfilesChanged);
         }
         self.publish();
         Ok(s)
@@ -591,6 +652,17 @@ impl<B: VpnBackend> Engine<B> {
                  Not connecting, to avoid running without the protection you asked for. \
                  Disable the kill switch in Settings to connect without it."
             )));
+        }
+        Ok(())
+    }
+
+    fn check_session_protection(&self) -> Result<()> {
+        self.check_requested_protection()?;
+        let l = self.live();
+        if l.settings.kill_switch && !l.blocking {
+            return Err(CoreError::invalid(
+                "the requested kill switch is not blocking traffic; disconnect and connect again to install it",
+            ));
         }
         Ok(())
     }
@@ -631,14 +703,37 @@ impl<B: VpnBackend> Engine<B> {
         // during a permission prompt must not be forgotten when preflight finishes.
         let cfg = tokio::select! {
             _ = cancel.cancelled() => return Err(CoreError::Cancelled),
-            result = tokio::time::timeout(CONNECT_TIMEOUT, self.backend.load(id)) => result
-                .map_err(|_| CoreError::Timeout { what: "loading destination profile".into(), seconds: CONNECT_TIMEOUT.as_secs() })??,
+            result = tokio::time::timeout(CONNECT_TIMEOUT, self.backend.load(id)) => {
+                let loaded = result.map_err(|_| CoreError::Timeout {
+                    what: "loading destination profile".into(),
+                    seconds: CONNECT_TIMEOUT.as_secs(),
+                })?;
+                match loaded {
+                    Err(CoreError::NotFound) => {
+                        return Err(CoreError::invalid(if self.caps.simulated {
+                            "this profile's WireGuard config is not in the simulated backend. \
+                             Re-import the .conf, or relaunch without AEGIS_BACKEND=mock to use \
+                             your NetworkManager profiles."
+                        } else {
+                            "this profile's WireGuard config is missing from the system store; \
+                             re-import the .conf"
+                        }));
+                    }
+                    other => other?,
+                }
+            }
         };
         let issues = aegis_config::validate(&cfg);
         if !issues.is_empty() {
             return Err(aegis_config::ConfigError { issues }.into());
         }
-        if current.profile().is_some() && self.settings().kill_switch {
+        let settings = self.settings();
+        let block = if settings.kill_switch {
+            Some(kill_switch_endpoints(&cfg)?)
+        } else {
+            None
+        };
+        if !current.is_idle() && current.profile().is_some() && settings.kill_switch {
             return Err(CoreError::unsupported(
                 "protected switching is unavailable; keeping the current tunnel",
             ));
@@ -655,6 +750,36 @@ impl<B: VpnBackend> Engine<B> {
         self.record_server(id, |s| s.last_attempt_ms = Some(now_ms()));
         self.set_state(ConnectionState::Preparing { profile: id });
         self.log(Level::Info, format!("Connecting to \"{}\"", meta.name));
+        // The block goes in before the tunnel exists, so nothing can slip out
+        // while it comes up. Endpoints are IP literals, so NM needs no DNS.
+        match &block {
+            Some(endpoints) => {
+                if let Err(e) = self
+                    .backend
+                    .apply_kill_switch(id, endpoints, settings.kill_switch_allow_lan)
+                    .await
+                {
+                    self.log(
+                        Level::Error,
+                        format!("Kill switch could not be turned on: {e}"),
+                    );
+                    self.set_state(ConnectionState::Failed {
+                        profile: Some(id),
+                        reason: format!(
+                            "the kill switch could not be turned on, so Aegis did not connect: {e}"
+                        ),
+                    });
+                    return Err(e);
+                }
+                self.live().blocking = true;
+                self.log(
+                    Level::Info,
+                    "Kill switch on: traffic outside the tunnel is blocked",
+                );
+            }
+            // A block left from an earlier session ends when connecting without one.
+            None => self.end_block().await?,
+        }
         self.set_state(ConnectionState::Connecting { profile: id });
 
         match self.activate_once(id, &cancel).await {
@@ -676,6 +801,10 @@ impl<B: VpnBackend> Engine<B> {
                 if matches!(e, CoreError::Cancelled) {
                     self.log(Level::Info, "Connection cancelled");
                     self.set_state(ConnectionState::Disconnected);
+                    // Cancel ends the session; a failed attempt does not, so the
+                    // block stays until the user disconnects.
+                    let _ = self.end_block().await;
+                    self.live().session = None;
                 } else {
                     self.log(
                         Level::Error,
@@ -692,7 +821,7 @@ impl<B: VpnBackend> Engine<B> {
     }
 
     async fn activate_once(&self, id: ProfileId, cancel: &CancellationToken) -> Result<()> {
-        self.check_requested_protection()?;
+        self.check_session_protection()?;
         tokio::select! {
             _ = cancel.cancelled() => Err(CoreError::Cancelled),
             r = tokio::time::timeout(CONNECT_TIMEOUT, async {
@@ -709,7 +838,12 @@ impl<B: VpnBackend> Engine<B> {
     }
 
     fn on_connected(self: &Arc<Self>, id: ProfileId) {
-        match self.check_requested_protection() {
+        {
+            let mut l = self.live();
+            l.session = Some(id);
+            l.activated_at = Some(tokio::time::Instant::now());
+        }
+        match self.check_session_protection() {
             Ok(()) => {
                 self.set_state(ConnectionState::Connected {
                     profile: id,
@@ -725,7 +859,7 @@ impl<B: VpnBackend> Engine<B> {
                 self.set_state(ConnectionState::Uncertain { profile: Some(id), reason: format!("existing tunnel does not meet requested protection: {e}; disconnect or change Settings") });
                 self.log(
                     Level::Warn,
-                    "Existing tunnel kept active, but requested protection is unavailable",
+                    "Existing tunnel kept active, but requested protection is not active",
                 );
             }
         }
@@ -746,23 +880,56 @@ impl<B: VpnBackend> Engine<B> {
 
     pub async fn disconnect(&self) -> Result<()> {
         self.cancel(); // stop a pending connect/reconnect first
+        self.live().session = None; // the user ended it; a resume must not bring it back
         let _g = self.op_lock.lock().await;
         let state = self.live().state.clone();
         let id = match state.profile() {
-            Some(id) => id,
+            Some(id) => Some(id),
             None if matches!(state, ConnectionState::Uncertain { .. }) => {
                 match self.read_status().await? {
-                    Some(s) => s.id,
+                    Some(s) => Some(s.id),
                     None => {
                         self.live().monitor_cancel.cancel();
                         self.set_state(ConnectionState::Disconnected);
-                        return Ok(());
+                        None
                     }
                 }
             }
-            None => return Ok(()),
+            None => None,
         };
-        self.teardown(id).await
+        if let Some(id) = id {
+            self.teardown(id).await?;
+        } else if matches!(state, ConnectionState::Failed { .. }) {
+            self.set_state(ConnectionState::Disconnected);
+        }
+        // Disconnect is what ends a kill-switch session, whatever state it was in.
+        self.end_block().await
+    }
+
+    /// Remove the kill-switch block if one is installed.
+    async fn end_block(&self) -> Result<()> {
+        if !self.live().blocking {
+            return Ok(());
+        }
+        match self.backend.remove_kill_switch().await {
+            Ok(()) => {
+                self.live().blocking = false;
+                self.log(
+                    Level::Info,
+                    "Kill switch off: traffic outside the tunnel is allowed again",
+                );
+                self.publish();
+                Ok(())
+            }
+            Err(e) => {
+                self.log(
+                    Level::Error,
+                    format!("Could not turn off the kill switch: {e}. Traffic stays blocked; try Disconnect again."),
+                );
+                self.publish();
+                Err(e)
+            }
+        }
     }
 
     async fn teardown(&self, id: ProfileId) -> Result<()> {
@@ -802,6 +969,14 @@ impl<B: VpnBackend> Engine<B> {
         let mut prev: Option<(u64, u64, u64)> = None; // rx, tx, at_ms
         let mut first_tx_ms: Option<u64> = None;
         let mut recorded_success = false;
+        // Evidence from before the last path change (resume, network switch)
+        // does not count: a response must arrive after it.
+        let (mut seen_epoch, mut base_rx, mut base_tx, mut event_ms) = (0u64, 0u64, 0u64, 0u64);
+        // A live server answers data within seconds (WireGuard sends a
+        // keepalive after 10 s). Sending with nothing coming back means the
+        // path or the server is gone, even after an earlier response.
+        let (mut rx_seen, mut tx_at_rx, mut rx_moved_at) =
+            (0u64, 0u64, tokio::time::Instant::now());
         let since_ms = match self.live().state {
             ConnectionState::Connected { since_ms, .. } => since_ms,
             _ => now_ms(),
@@ -859,11 +1034,31 @@ impl<B: VpnBackend> Engine<B> {
                         });
                         recorded_success = true;
                     }
-                    if s.tx_bytes > 0 && first_tx_ms.is_none() {
+                    let (epoch, changed_at) = {
+                        let l = self.live();
+                        (l.path_epoch, l.path_changed_ms)
+                    };
+                    if epoch != seen_epoch {
+                        (seen_epoch, base_rx, base_tx, event_ms) =
+                            (epoch, s.rx_bytes, s.tx_bytes, changed_at);
+                        first_tx_ms = None;
+                    }
+                    if s.tx_bytes > base_tx && first_tx_ms.is_none() {
                         first_tx_ms = Some(now);
                     }
-                    let confirmed = s.last_handshake_ms.is_some() || s.rx_bytes > 0;
-                    let peer = if confirmed {
+                    let confirmed = if seen_epoch == 0 {
+                        s.last_handshake_ms.is_some() || s.rx_bytes > 0
+                    } else {
+                        s.last_handshake_ms.is_some_and(|h| h > event_ms) || s.rx_bytes > base_rx
+                    };
+                    if s.rx_bytes != rx_seen {
+                        (rx_seen, tx_at_rx, rx_moved_at) =
+                            (s.rx_bytes, s.tx_bytes, tokio::time::Instant::now());
+                    }
+                    let silent = s.tx_bytes > tx_at_rx && rx_moved_at.elapsed() > SILENT_AFTER;
+                    let peer = if silent {
+                        PeerState::NoResponse
+                    } else if confirmed {
                         PeerState::Confirmed
                     } else if first_tx_ms
                         .is_some_and(|t| now - t > NO_RESPONSE_AFTER.as_millis() as u64)
@@ -889,6 +1084,7 @@ impl<B: VpnBackend> Engine<B> {
                         }
                     });
                     let mut changed = None;
+                    let mut was = PeerState::Pending;
                     {
                         let mut l = self.live();
                         l.stats = Some(Stats {
@@ -903,6 +1099,7 @@ impl<B: VpnBackend> Engine<B> {
                         if let ConnectionState::Connected { peer: old, .. } = &mut l.state
                             && *old != peer
                         {
+                            was = *old;
                             *old = peer;
                             changed = Some(peer);
                         }
@@ -917,6 +1114,13 @@ impl<B: VpnBackend> Engine<B> {
                         Some(PeerState::Confirmed) => {
                             self.log(Level::Info, "Server responded; tunnel confirmed")
                         }
+                        Some(PeerState::NoResponse) if was == PeerState::Confirmed => {
+                            self.record_server(id, |server| server.last_failure_ms = Some(now));
+                            self.log(
+                                Level::Warn,
+                                "The server stopped answering. The network may be down or you may have switched networks; Aegis keeps the tunnel and will confirm it again when the server replies.",
+                            );
+                        }
                         Some(PeerState::NoResponse) => {
                             self.record_server(id, |server| server.last_failure_ms = Some(now));
                             self.log(Level::Warn, "No response from the server yet. Check the endpoint, keys, and that UDP is not blocked.");
@@ -925,7 +1129,7 @@ impl<B: VpnBackend> Engine<B> {
                     }
                     self.verify_protection(id, &s).await;
                     let uncertain = matches!(self.live().state, ConnectionState::Uncertain { .. });
-                    if uncertain && self.check_requested_protection().is_ok() {
+                    if uncertain && self.check_session_protection().is_ok() {
                         self.set_state(ConnectionState::Connected {
                             profile: id,
                             since_ms,
@@ -1068,6 +1272,97 @@ impl<B: VpnBackend> Engine<B> {
         }
     }
 
+    /// Reacts to OS events (resume from sleep, network switch) from the backend.
+    /// A burst of events (Wi-Fi roaming emits several) is handled once, after
+    /// the network has had a moment to settle.
+    async fn system_event_loop(
+        weak: std::sync::Weak<Self>,
+        mut rx: tokio::sync::mpsc::Receiver<SystemEvent>,
+    ) {
+        while let Some(first) = rx.recv().await {
+            let (mut resumed, mut changed) = (
+                first == SystemEvent::Resumed,
+                first == SystemEvent::NetworkChanged,
+            );
+            let settle = tokio::time::sleep(SETTLE_AFTER_EVENT);
+            tokio::pin!(settle);
+            loop {
+                tokio::select! {
+                    _ = &mut settle => break,
+                    e = rx.recv() => match e {
+                        Some(SystemEvent::Resumed) => resumed = true,
+                        Some(SystemEvent::NetworkChanged) => changed = true,
+                        None => return,
+                    },
+                }
+            }
+            let Some(me) = weak.upgrade() else { return };
+            if resumed {
+                me.on_resume().await;
+            } else if changed {
+                me.on_network_changed();
+            }
+        }
+    }
+
+    /// The path to the server may have changed: forget proof from before it.
+    /// Returns whether a session was affected.
+    fn mark_path_changed(&self) -> bool {
+        let mut l = self.live();
+        let affected = matches!(
+            l.state,
+            ConnectionState::Connected { .. } | ConnectionState::Reconnecting { .. }
+        );
+        if !affected {
+            return false;
+        }
+        l.path_epoch += 1;
+        l.path_changed_ms = now_ms();
+        if let ConnectionState::Connected { peer, .. } = &mut l.state {
+            *peer = PeerState::Pending;
+        }
+        l.verified = None;
+        l.reachability = None;
+        l.public_ip = None;
+        true
+    }
+
+    fn on_network_changed(&self) {
+        // Bringing the tunnel up changes NetworkManager's state itself.
+        if self
+            .live()
+            .activated_at
+            .is_some_and(|t| t.elapsed() < OWN_ACTIVATION_NOISE)
+        {
+            return;
+        }
+        if self.mark_path_changed() {
+            self.log(
+                Level::Info,
+                "The network changed; checking that the tunnel still works",
+            );
+            self.publish();
+        }
+    }
+
+    async fn on_resume(self: &Arc<Self>) {
+        self.log(Level::Info, "The computer woke from sleep");
+        if self.mark_path_changed() {
+            self.publish();
+        }
+        // A session that ran out of retries while asleep gets one fresh start.
+        let (state, session, auto) = {
+            let l = self.live();
+            (l.state.clone(), l.session, l.settings.auto_reconnect)
+        };
+        if let (ConnectionState::Failed { .. }, Some(id), true) = (state, session, auto) {
+            self.log(Level::Info, "Reconnecting after sleep");
+            if let Err(e) = self.connect(id).await {
+                self.log(Level::Warn, format!("Could not reconnect after sleep: {e}"));
+            }
+        }
+    }
+
     async fn reconnect_loop(self: Arc<Self>, id: ProfileId, stop: CancellationToken) {
         let guard = self.op_lock.lock().await;
         if stop.is_cancelled() {
@@ -1093,7 +1388,10 @@ impl<B: VpnBackend> Engine<B> {
                 return;
             }
             if cancel.is_cancelled() {
-                let _ = self.teardown(id).await;
+                if self.teardown(id).await.is_ok() {
+                    let _ = self.end_block().await;
+                    self.live().session = None;
+                }
                 return;
             }
             self.set_state(ConnectionState::Reconnecting {
@@ -1116,7 +1414,10 @@ impl<B: VpnBackend> Engine<B> {
                 return;
             }
             if cancelled || cancel.is_cancelled() {
-                let _ = self.teardown(id).await;
+                if self.teardown(id).await.is_ok() {
+                    let _ = self.end_block().await;
+                    self.live().session = None;
+                }
                 return;
             }
             self.record_server(id, |s| s.last_attempt_ms = Some(now_ms()));
@@ -1126,7 +1427,10 @@ impl<B: VpnBackend> Engine<B> {
                     return;
                 }
                 Err(CoreError::Cancelled) => {
-                    let _ = self.teardown(id).await;
+                    if self.teardown(id).await.is_ok() {
+                        let _ = self.end_block().await;
+                        self.live().session = None;
+                    }
                     return;
                 }
                 Err(e) => {
@@ -1162,11 +1466,40 @@ impl<B: VpnBackend> Engine<B> {
             return;
         }
         let known: Vec<ProfileId> = self.live().profiles.iter().map(|p| p.id).collect();
+        let blocking = self.backend.kill_switch_active().await;
+        if blocking {
+            self.live().blocking = true;
+            self.log(
+                Level::Warn,
+                "The kill switch from the previous session is still blocking traffic outside the tunnel",
+            );
+        }
         match self.backend.installed().await {
             Ok(installed) => {
-                for orphan in installed.into_iter().filter(|id| !known.contains(id)) {
+                for orphan in installed.iter().copied().filter(|id| !known.contains(id)) {
                     self.log(Level::Warn, format!("Removing leftover tunnel profile {orphan} from an interrupted operation"));
                     let _ = self.backend.uninstall(orphan).await;
+                }
+                let missing = known
+                    .iter()
+                    .copied()
+                    .filter(|id| !installed.contains(id))
+                    .count();
+                if missing > 0 {
+                    self.log(
+                        Level::Warn,
+                        if self.caps.simulated {
+                            format!(
+                                "{missing} listed profile(s) have no simulated config. Re-import \
+                                 each .conf, or relaunch without AEGIS_BACKEND=mock to use NetworkManager."
+                            )
+                        } else {
+                            format!(
+                                "{missing} listed profile(s) are missing from the VPN backend; \
+                                 re-import their .conf files before connecting."
+                            )
+                        },
+                    );
                 }
             }
             Err(e) => self.log(Level::Warn, format!("Could not list backend profiles: {e}")),
@@ -1179,6 +1512,12 @@ impl<B: VpnBackend> Engine<B> {
                 );
                 self.on_connected(s.id);
             }
+            Ok(None) if blocking => self.set_state(ConnectionState::Failed {
+                profile: None,
+                reason: "the kill switch from the previous session is still blocking traffic; connect again, \
+                         or choose Stop blocking"
+                    .into(),
+            }),
             Ok(None) => {}
             result => {
                 let (profile, reason) = match result {
@@ -1209,4 +1548,28 @@ impl<B: VpnBackend> Engine<B> {
     pub(crate) fn profiles_meta(&self) -> Vec<ProfileMeta> {
         self.live().profiles.clone()
     }
+}
+
+/// WireGuard endpoints the kill switch must allow. Only IP literals: a name
+/// would need DNS outside the tunnel to resolve, which the block forbids.
+fn kill_switch_endpoints(cfg: &WgConfig) -> Result<Vec<std::net::SocketAddr>> {
+    let mut out = Vec::new();
+    for e in cfg.peers.iter().filter_map(|p| p.endpoint.as_ref()) {
+        match &e.host {
+            aegis_config::Host::Ip(ip) => out.push(std::net::SocketAddr::new(*ip, e.port)),
+            aegis_config::Host::Name(_) => {
+                return Err(CoreError::invalid(
+                    "the kill switch needs each server endpoint as an IP address, because names cannot be \
+                     looked up while traffic outside the tunnel is blocked. Edit the profile's endpoint to the \
+                     server's IP address, or turn off the kill switch.",
+                ));
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err(CoreError::invalid(
+            "the kill switch needs the server's endpoint, and this profile has none",
+        ));
+    }
+    Ok(out)
 }

@@ -5,7 +5,7 @@ members = [
     "crates/aegis-core",
     "crates/aegis-linux",
     "crates/aegis-windows",
-    # "services/linux-helper",
+    "services/linux-helper",
     # "services/windows-service",
     "apps/desktop/src-tauri",
 ]
@@ -37,6 +37,7 @@ x25519-dalek = { version = "3", features = ["static_secrets"] }
 zeroize = "1.9"
 getrandom = "0.4"
 proptest = "1.12"
+futures-util = { version = "0.3", default-features = false }
 zbus = { version = "6.3", default-features = false, features = ["tokio", "proxy"] }
 
 # Two-line VariantStrIter fix on the 0.18-compatible backport (unmerged upstream PR #2009).

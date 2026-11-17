@@ -2,6 +2,207 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-17 — Windows backend, step 1 (protocol, naming, pipe client)
+
+Host (Linux): `cargo test -p aegis-windows` 9 passed: frame round trip, redacted
+`Debug` of configs, oversized frame refused before allocating, garbage and
+truncated frames are errors, clean EOF, error kinds survive the wire, tunnel
+names within WireGuard's 32-char limit and ownership shape. `cargo clippy
+--workspace --all-targets -D warnings` clean; `cargo test --workspace` 120 passed;
+`cargo clippy -p aegis-windows --target x86_64-pc-windows-msvc` clean.
+**Not run:** anything on Windows. The pipe client, service, DPAPI, SCM, tunnel.dll
+and WFP kill switch are unexecuted or unwritten. A compile is not a test.
+
+## 2026-11-17 — Sleep/resume, network switching, silent server; helper handshake; wrapper fix
+
+**Defect found and fixed first:** the desktop's `AnyBackend` wrapper did not
+forward `apply_kill_switch`, `remove_kill_switch` or `kill_switch_active`; the
+trait defaults refused, so the kill switch of 2026-11-16 would have failed to
+turn on in the real app (the VM suite drives `NmBackend` directly and did not
+see it). Those three trait methods now have no default, so a missing forward is
+a compile error, and `backend::tests` checks the wrapper passes them through.
+
+Host: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`
+pass; `cargo test --workspace` 111 passed (core 62 incl. 7 new: network change
+discards old proof and recovers, own-activation noise ignored, resume restarts
+a session that ran out of retries, resume never revives a user-ended or
+never-connected session, kill switch stays on through sleep/resume, a silent
+server is reported and recovers while an idle tunnel is not; helper 3;
+desktop wrapper 2). Frontend biome, tsc, `vitest run` 28 passed. Windows
+type-check: `cargo check -p aegis-windows --target x86_64-pc-windows-msvc` pass.
+`shellcheck`/`shfmt -d` pass on the VM and install scripts.
+
+VM (`scripts/vm/run-vm-tests.sh`, Debian 13, NM 1.52.1): **215 PASS, 0 FAIL**,
+`ALL PASSED` in `full` and `full4`. New in this run, per mode:
+- Handshake time read as root through the helper (`wg show … latest-handshakes`),
+  reported `Supported`, and 8–12 s old when sampled.
+- Network switch with the kill switch on: a better-metric dummy uplink in
+  NetworkManager changes the primary connection; the engine logged "The network
+  changed", re-confirmed with fresh data, kept routing through the tunnel and
+  the block, and nothing was seen on the uplink (tcpdump). Switching back did
+  the same.
+- Silent server: stopping the server's WireGuard interface inside the test
+  namespace while the client kept pinging turned the peer to `NoResponse`
+  within 60 s (tunnel kept, "stopped answering" logged, kill switch still
+  blocking, nothing on the uplink); restarting it returned to `Confirmed`.
+- Routes, rules, DNS and nftables identical to the baseline afterwards.
+- A hand experiment (`events_probe` in the VM) showed the watcher receiving
+  `NetworkChanged` bursts (3 at once on a switch, 1 on switch-back).
+
+Earlier runs of this suite version had two test-side failures, fixed before
+the final run: the "stopped answering" assertion ran after a second network
+switch had reset the peer to Pending (test now re-confirms first), and a
+settings change returned `Busy` while the monitor held the operation lock
+(test now retries).
+
+Not tested: a real suspend/resume (the resume path is unit-tested with an
+injected event and the logind watcher is untested end to end), a real Wi-Fi or
+Ethernet switch, and whether NetworkManager re-adds the endpoint route after a
+real uplink change. The new `handshake` helper command needs the helper
+reinstalled on machines that installed the earlier one.
+
+## 2026-11-17 — Locations feature, final combined-workspace validation
+
+- `cargo fmt --all --check`: pass.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`: pass.
+- `cargo test --workspace --all-targets --locked`: **102 passed**, 12 suites.
+  Includes portable config/core, Linux mapping/checks, helper unit checks and
+  GLib source-pin tests. Mock engine tests are not real tunnel validation.
+- `cargo build -p aegis-desktop --locked`: pass (Linux desktop executable).
+- Frontend `biome check src`, `tsc --noEmit`, `vitest run`, `vite build`:
+  pass; **27 tests** across 2 files. Biome retains its existing config
+  deprecation notice. Used installed `node_modules/.bin` tools because the
+  global pnpm launcher returned `Exec format error`; no dependency changes
+  were needed for Locations.
+- `cargo check -p aegis-core -p aegis-windows --target
+  x86_64-pc-windows-msvc --locked`: pass. This checks Windows-target source,
+  not a Windows executable/runtime VPN. The Windows tunnel service is still
+  unimplemented; Windows CI builds/portable tests remain configured.
+- Source assertions: all **249** ISO catalog codes have bundled flag assets;
+  every declared Tauri command has a handler and explicit permission; no broad
+  shell/fs/http/dialog JS permissions were added. `git diff --check`: pass.
+- Optional Jev completion-check preview was rejected by automatic approval
+  review over potential external disclosure of repository/test details. It was
+  not retried or bypassed; completion boundaries rely on local checks above.
+- Independent code review found lost preflight cancellation and a disabled
+  Cancel button; fixed and regression-tested. A follow-up found failed protected
+  retry misclassified as switching; fixed. Protected active country switches
+  remain refused, with tests asserting no tunnel/block mutation. Preference
+  changes now emit the event needed to refresh cached profile views.
+- Earlier UI checks failed on ambiguous test queries and the corrected DNS
+  resolver-egress label; assertions were corrected and final suites passed.
+  A combined run also caught the concurrently edited cancelled-reconnect
+  cleanup regression; its targeted test and subsequent full suite passed.
+- Read-only `nm_probe` ran on 2026-11-16: NM 1.58.1 and an existing Up tunnel
+  observed. No host profile, route, firewall or tunnel was changed by this
+  feature's validation.
+- `scripts/vm/run-vm-tests.sh`: **could not start**, `/dev/kvm` unavailable in
+  this execution environment. Extended country-profile switch/traffic checks
+  are in `vm_suite`, and the manual `vpn-integration.yml` workflow is configured.
+  Separately recorded VM runs below are not claimed as this session's live
+  validation. No live Windows, independent public multi-country server,
+  protected-switch, suspend/reboot/uplink-change or visual desktop check ran.
+
+The Locations UI/registry and unprotected switching integration are implemented;
+full cross-platform/protected-network acceptance is **not complete**. Existing
+private/preshared keys enter through native `.conf` import; manual setup uses
+Rust-generated keys and explicit remote-registration confirmation. RTT remains
+unmeasured; provisioning and geolocation are not implemented.
+
+## 2026-11-17 — Audit fixes with the kill-switch integration
+
+Two integration regressions were reproduced with mock backends before their
+fixes, then passed:
+
+- Cancelling a scheduled reconnect after backend deactivation fails must
+  retain the firewall block and `Uncertain` state; a later successful Disconnect
+  removes the block. All three reconnect cancellation paths now require
+  successful teardown before removing it.
+- Recovery with a supported helper but no installed block must keep the live
+  tunnel `Uncertain`, refuse unprotected reactivation after a drop and allow
+  a fresh protected connection after Disconnect. Session checks now require
+  an installed block as well as backend support.
+
+Combined working-tree checks (includes concurrent work):
+
+- `cargo test --workspace --all-targets --locked`: **100 passed** (12 suites).
+- `cargo test -p aegis-desktop --test glib_security --release --locked`:
+  **2 passed**, retaining the optimized GLib iterator and source-pin checks.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`: pass.
+- `cargo fmt --all --check`: pass after formatting the new Rust assertion.
+- Frontend Vitest: **27 passed**; TypeScript and Biome passed. A transient
+  formatting failure in the concurrently edited `App.test.tsx` was gone on
+  the final check; Biome retains its existing configuration deprecation notice.
+- Focused Jev Review ran twice. Its scores are advisory; the mock regressions
+  and project checks provide the executable evidence.
+
+Attempted `bash scripts/vm/run-vm-tests.sh`: exited 1 before booting because
+`/dev/kvm` is absent in this environment (runner: "no write access to
+/dev/kvm"). No host network or firewall changes were made. The earlier VM
+results below are historical evidence, not a live rerun of these changes.
+No IPv6 implementation was changed in this follow-up.
+
+Not rerun here: Windows, real Polkit prompt/desktop flow, dependency audit,
+yanked-release checks or Gitleaks. The new root helper was not independently
+security-audited by this focused core follow-up.
+
+## 2026-11-16 — Kill switch (aegis-helper, pkexec, nftables `inet aegis_vpn`)
+
+Host:
+- `cargo clippy --workspace --all-targets -- -D warnings`: pass.
+  `cargo test --workspace`: 95 passed (incl. helper argv/ruleset tests and 5
+  engine kill-switch tests: block before activation, kept after drop and
+  failed attempt, removed on Disconnect, hostname endpoints refused, failed
+  apply never activates, leftover block adopted at startup).
+- `nft` accepted the generated ruleset and the helper's read-back passed in an
+  isolated user+network namespace (`unshare -rn`, host firewall untouched);
+  marker-write failure rolls the table back (ruleset empty afterwards).
+- Frontend biome, tsc, `vitest run`: 25 passed (new: "Stop blocking" shown and
+  wired while the kill switch blocks after a failure).
+- `shellcheck`, `shfmt -d` on `scripts/install-helper.sh`, `scripts/vm/run-vm-tests.sh`: pass.
+
+VM (`scripts/vm/run-vm-tests.sh`, Debian 13, NM 1.52.1, helper + Polkit policy
+installed at package paths, test-only Polkit rule for the SSH user):
+**167 PASS, 0 FAIL**, `ALL PASSED` in `full` and `full4`. Per mode:
+- Kill switch reported `Supported`, then `Verified`; table present; server
+  confirmed and sentinel reachable through the block.
+- Uplink tcpdump (6 s window, exit 124 = nothing seen): no packets from
+  `ping -I <uplink> 1.1.1.1`; LAN (slirp gateway 10.0.2.2) blocked.
+- After `nmcli connection down` (auto-reconnect off): state Failed, table still
+  present, still nothing on the uplink.
+- Disconnect removes the table; positive control: the same forced ping is
+  then seen on the uplink.
+- Allow local network: LAN packets seen, forced internet ping still blocked.
+- Routes, rules, DNS and nftables identical to the baseline afterwards.
+
+Not tested: real desktop Polkit prompt flow (VM used a test rule), app crash
+with block left behind (unit-tested with the mock only), reboot, tray UI.
+
+## 2026-11-16 — IPv6 block as tunnel device route; reachability (combined working tree)
+
+Fixes the leftover found in the run recorded further down ("DNS/IPv6
+protection (block + runtime verify)"): IPv4-only full tunnels now route
+`::/0` into the tunnel device (metric 1) instead of a `type=unreachable` route
+on `lo`. Chosen by a manual VM experiment (connect, restart NM, disconnect):
+both `unreachable` variants (method manual / link-local) left the route
+behind; the device route left nothing.
+
+- `cargo clippy --workspace --all-targets -- -D warnings`: pass (after fixing
+  an unused `mut` in `vm_suite`). `cargo test --workspace`: pass (config 22,
+  core 43, linux 20 incl. `/proc/net/ipv6_route` parsing and IPv6 judging,
+  glib_security 2).
+- VM (`scripts/vm/run-vm-tests.sh`, Debian 13, NM 1.52.1, kernel
+  6.12.116): **122 PASS, 0 FAIL**, `ALL PASSED` in `full` and `full4`.
+  - full4: `ip -6 route get` → `dev aegis-… metric 1`; ping6 fails; tcpdump
+    on uplink `ens3` captured no IPv6 packets (ran full 6 s, exit 124); IPv6
+    reported `Verified` ("sent into the tunnel … dropped"); pre-blocking
+    install refreshed on connect; **nothing left after NM restart cycle**.
+  - full: IPv6 via tunnel, `Verified`. DNS `Verified` in both modes.
+  - Reachability: `Verified` with tunnel DNS answering; `Failed` ("no
+    answer … within 3 seconds") after stopping the tunnel's dnsmasq. Both modes.
+- Not run: frontend checks after this change (no frontend files changed since
+  the 23-pass run), tray/notifications, Windows.
+
 ## 2026-11-16 — Final audit-only security validation
 
 Scope: the user chose to keep the audit fixes and leave IPv6 blocking to the

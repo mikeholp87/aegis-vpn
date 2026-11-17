@@ -2,6 +2,8 @@
 //! explicitly requested with `AEGIS_BACKEND=mock`; if no real backend works we
 //! report that instead of silently pretending.
 
+use std::path::Path;
+
 use aegis_config::WgConfig;
 use aegis_core::mock::MockBackend;
 use aegis_core::{
@@ -18,10 +20,16 @@ pub enum AnyBackend {
     Unavailable(String),
 }
 
-pub async fn select() -> AnyBackend {
+pub async fn select(data_dir: &Path) -> AnyBackend {
     if std::env::var("AEGIS_BACKEND").as_deref() == Ok("mock") {
         tracing::warn!("using the simulated backend (AEGIS_BACKEND=mock)");
-        return AnyBackend::Mock(MockBackend::default());
+        return match MockBackend::with_store(data_dir.join("mock-backend")) {
+            Ok(b) => AnyBackend::Mock(b),
+            Err(e) => {
+                tracing::error!("mock store unavailable ({e}); using in-memory mock only");
+                AnyBackend::Mock(MockBackend::default())
+            }
+        };
     }
     #[cfg(target_os = "linux")]
     {
@@ -147,6 +155,45 @@ impl VpnBackend for AnyBackend {
         }
     }
 
+    fn system_events(&self) -> Option<tokio::sync::mpsc::Receiver<aegis_core::SystemEvent>> {
+        match self {
+            AnyBackend::Mock(b) => b.system_events(),
+            #[cfg(target_os = "linux")]
+            AnyBackend::Nm(b) => b.system_events(),
+            #[cfg(windows)]
+            AnyBackend::Win(b) => b.system_events(),
+            AnyBackend::Unavailable(_) => None,
+        }
+    }
+
+    async fn apply_kill_switch(
+        &self,
+        id: ProfileId,
+        endpoints: &[std::net::SocketAddr],
+        allow_lan: bool,
+    ) -> Result<()> {
+        delegate!(self, b => b.apply_kill_switch(id, endpoints, allow_lan).await)
+    }
+
+    async fn remove_kill_switch(&self) -> Result<()> {
+        // Nothing was ever applied without a backend; removing is a no-op.
+        if matches!(self, AnyBackend::Unavailable(_)) {
+            return Ok(());
+        }
+        delegate!(self, b => b.remove_kill_switch().await)
+    }
+
+    async fn kill_switch_active(&self) -> bool {
+        match self {
+            AnyBackend::Mock(b) => b.kill_switch_active().await,
+            #[cfg(target_os = "linux")]
+            AnyBackend::Nm(b) => b.kill_switch_active().await,
+            #[cfg(windows)]
+            AnyBackend::Win(b) => b.kill_switch_active().await,
+            AnyBackend::Unavailable(_) => false,
+        }
+    }
+
     async fn check_public_ip(&self, profile: &ProfileSummary, status: &TunnelStatus) -> Feature {
         match self {
             AnyBackend::Mock(b) => b.check_public_ip(profile, status).await,
@@ -156,5 +203,35 @@ impl VpnBackend for AnyBackend {
             AnyBackend::Win(b) => b.check_public_ip(profile, status).await,
             AnyBackend::Unavailable(_) => Feature::Off,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The wrapper once dropped the kill-switch calls (trait defaults refused),
+    /// which made the feature fail in the real app while backend tests passed.
+    #[tokio::test]
+    async fn kill_switch_calls_reach_the_wrapped_backend() {
+        let b = AnyBackend::Mock(MockBackend::with_test_kill_switch());
+        let id = ProfileId::new();
+        let ep = ["203.0.113.5:51820".parse().unwrap()];
+        b.apply_kill_switch(id, &ep, false).await.unwrap();
+        assert!(b.kill_switch_active().await);
+        b.remove_kill_switch().await.unwrap();
+        assert!(!b.kill_switch_active().await);
+    }
+
+    #[tokio::test]
+    async fn unavailable_backend_never_blocks_and_never_pretends() {
+        let b = AnyBackend::Unavailable("test".into());
+        assert!(
+            b.apply_kill_switch(ProfileId::new(), &[], false)
+                .await
+                .is_err()
+        );
+        assert!(!b.kill_switch_active().await);
+        assert!(b.remove_kill_switch().await.is_ok());
     }
 }

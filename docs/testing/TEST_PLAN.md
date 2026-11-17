@@ -35,8 +35,9 @@ systemd-resolved, wireguard-tools, dnsmasq, tcpdump), copies a static musl
   to the pre-connect baseline; no leftover NM connection
 
 `KEEP_VM=1` leaves the VM running and prints the SSH command.
-Not yet covered: kill switch (not implemented), suspend/resume, reboot with the
-tunnel active, Wi-Fi/uplink changes.
+The extended suite also checks the optional Linux helper block; see current test
+results for its environment and scope. Still pending: protected country switching,
+suspend/resume, reboot with the tunnel active, Wi-Fi/uplink changes.
 
 ## Release matrix
 Windows 11 x64 · Ubuntu LTS GNOME · Debian stable KDE · Fedora Workstation ×
@@ -75,5 +76,5 @@ remote credentials/no handshake, failure during switching/authorization/DNS/
 firewall cleanup, suspend/resume, uplink changes, crash/restart and reboot.
 Windows CI compilation/portable tests do not substitute for an implemented
 Windows service, authenticated IPC/DPAPI tests and a Windows 11 real tunnel.
-No protected-switch success can be accepted until a continuous kill switch is
-implemented. Update TEST_RESULTS with environment and actual evidence.
+No protected-switch success can be accepted until continuous protection across
+transitions and helper failure paths is implemented and tested. Update TEST_RESULTS with environment and actual evidence.

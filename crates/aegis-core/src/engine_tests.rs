@@ -529,6 +529,18 @@ async fn server_metadata_migrates_and_persists_without_credentials() {
         "SG"
     );
     assert!(saved[0].server.favorite);
+    let mut settings = e.settings();
+    settings.favorite_countries = vec!["SG".into()];
+    settings.quick_connect_country = Some("SG".into());
+    settings.preferred_profile = Some(a);
+    e.set_settings(settings).unwrap();
+    let settings = crate::store::Store::open(dir.path())
+        .unwrap()
+        .settings()
+        .unwrap();
+    assert_eq!(settings.favorite_countries, ["SG"]);
+    assert_eq!(settings.quick_connect_country.as_deref(), Some("SG"));
+    assert_eq!(settings.preferred_profile, Some(a));
     let json = std::fs::read_to_string(dir.path().join("profiles.json")).unwrap();
     assert!(!json.contains(PRIV) && !json.contains(PSK));
     let mut legacy: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -775,4 +787,511 @@ async fn connectivity_checks_wait_for_peer_confirmation() {
         "never probed after confirmation"
     );
     e.disconnect().await.unwrap();
+}
+
+// ---------- kill switch ----------
+
+async fn ks_engine(allow_lan: bool) -> (Arc<Engine<MockBackend>>, tempfile::TempDir, ProfileId) {
+    let dir = tempfile::tempdir().unwrap();
+    let e = Engine::start(MockBackend::with_test_kill_switch(), dir.path())
+        .await
+        .unwrap();
+    let id = e
+        .import_text("Work", &CONF.replace("vpn.example.com", "203.0.113.5"))
+        .await
+        .unwrap()
+        .meta
+        .id;
+    let mut s = e.settings();
+    s.kill_switch = true;
+    s.kill_switch_allow_lan = allow_lan;
+    s.auto_reconnect = false;
+    e.set_settings(s).unwrap();
+    (e, dir, id)
+}
+
+#[tokio::test]
+async fn kill_switch_blocks_before_the_tunnel_and_until_disconnect() {
+    let (e, _d, id) = ks_engine(true).await;
+    e.connect(id).await.unwrap();
+    let (owner, eps, lan) = e.backend().blocking().expect("blocking while connected");
+    assert_eq!((owner, lan), (id, true));
+    assert_eq!(eps, vec!["203.0.113.5:51820".parse().unwrap()]);
+    assert!(matches!(
+        e.snapshot().protection.kill_switch,
+        Feature::Verified(_)
+    ));
+    // Settings cannot change underneath a protected session.
+    let mut s = e.settings();
+    s.kill_switch = false;
+    assert!(e.set_settings(s).is_err());
+
+    e.disconnect().await.unwrap();
+    assert!(e.backend().blocking().is_none());
+    assert_eq!(
+        e.backend().ops(),
+        ["apply", "activate", "deactivate", "remove"]
+    );
+    assert_eq!(e.snapshot().protection.kill_switch, Feature::Off);
+}
+
+#[tokio::test(start_paused = true)]
+async fn kill_switch_keeps_blocking_after_a_drop_until_the_user_disconnects() {
+    let (e, _d, id) = ks_engine(false).await;
+    e.connect(id).await.unwrap();
+    e.backend().drop_tunnel();
+    wait_for(&e, "failed after drop", |s| {
+        matches!(s, ConnectionState::Failed { .. })
+    })
+    .await;
+    assert!(
+        e.backend().blocking().is_some(),
+        "a dropped tunnel must not unblock"
+    );
+    assert!(matches!(
+        e.snapshot().protection.kill_switch,
+        Feature::Verified(_)
+    ));
+    e.disconnect().await.unwrap();
+    assert!(e.backend().blocking().is_none());
+    assert_eq!(e.snapshot().state, ConnectionState::Disconnected);
+}
+
+#[tokio::test]
+async fn kill_switch_failed_activation_keeps_blocking_and_cancel_unblocks() {
+    let (e, _d, id) = ks_engine(false).await;
+    e.backend().fail_next_activate("endpoint unreachable");
+    assert!(e.connect(id).await.is_err());
+    assert!(matches!(e.snapshot().state, ConnectionState::Failed { .. }));
+    assert!(
+        e.backend().blocking().is_some(),
+        "session started at Connect"
+    );
+    e.disconnect().await.unwrap();
+    assert!(e.backend().blocking().is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancelled_reconnect_keeps_blocking_when_cleanup_fails() {
+    let (e, _d, id) = ks_engine(false).await;
+    let mut settings = e.settings();
+    settings.auto_reconnect = true;
+    e.set_settings(settings).unwrap();
+    e.connect(id).await.unwrap();
+    e.backend().drop_tunnel();
+    wait_for(&e, "retry scheduled", |s| {
+        matches!(s, ConnectionState::Reconnecting { .. })
+    })
+    .await;
+
+    e.backend().fail_deactivate(true);
+    e.cancel();
+    wait_for(&e, "cleanup uncertain", |s| {
+        matches!(s, ConnectionState::Uncertain { .. })
+    })
+    .await;
+    assert!(
+        e.backend().blocking().is_some(),
+        "failed tunnel cleanup must not remove the firewall block"
+    );
+    assert!(!e.backend().ops().contains(&"remove"));
+
+    e.backend().fail_deactivate(false);
+    e.disconnect().await.unwrap();
+    assert!(e.backend().blocking().is_none());
+    assert_eq!(e.snapshot().state, ConnectionState::Disconnected);
+}
+
+#[tokio::test]
+async fn kill_switch_refuses_hostnames_and_failed_apply_never_connects() {
+    let (e, _d, _) = ks_engine(false).await;
+    let named = e.import_text("Named", CONF).await.unwrap().meta.id;
+    let err = e.connect(named).await.unwrap_err();
+    assert!(err.to_string().contains("IP address"), "{err}");
+    assert!(
+        err.to_string().contains("turn off the kill switch"),
+        "{err}"
+    );
+    assert!(e.backend().ops().is_empty(), "nothing applied or activated");
+
+    let id = e
+        .import_text("Ip", &CONF.replace("vpn.example.com", "198.51.100.7"))
+        .await
+        .unwrap()
+        .meta
+        .id;
+    e.backend().fail_next_kill_switch();
+    assert!(e.connect(id).await.is_err());
+    assert_eq!(e.backend().ops(), ["apply"], "no tunnel without the block");
+    assert!(e.backend().status().await.unwrap().is_none());
+    assert!(matches!(e.snapshot().state, ConnectionState::Failed { .. }));
+}
+
+#[tokio::test]
+async fn kill_switch_left_by_a_previous_run_is_reported_and_removable() {
+    let dir = tempfile::tempdir().unwrap();
+    let backend = MockBackend::with_test_kill_switch();
+    backend.leave_block(ProfileId::new());
+    let e = Engine::start(backend, dir.path()).await.unwrap();
+    assert!(matches!(
+        e.snapshot().state,
+        ConnectionState::Failed { profile: None, .. }
+    ));
+    assert!(matches!(
+        e.snapshot().protection.kill_switch,
+        Feature::Verified(_)
+    ));
+    e.disconnect().await.unwrap();
+    assert!(e.backend().blocking().is_none());
+    assert_eq!(e.snapshot().state, ConnectionState::Disconnected);
+}
+
+#[tokio::test(start_paused = true)]
+async fn recovery_with_supported_but_missing_kill_switch_blocks_reactivation() {
+    let (e, dir, id) = ks_engine(false).await;
+    let mut settings = e.settings();
+    settings.auto_reconnect = true;
+    settings.reconnect_max_attempts = 1;
+    e.set_settings(settings).unwrap();
+    drop(e);
+    let backend = MockBackend::with_test_kill_switch();
+    let cfg = aegis_config::parse(&CONF.replace("vpn.example.com", "203.0.113.5")).unwrap();
+    backend.install(id, "Work", &cfg).await.unwrap();
+    backend.activate(id).await.unwrap();
+    let e = Engine::start(backend, dir.path()).await.unwrap();
+
+    assert!(matches!(
+        e.snapshot().state,
+        ConnectionState::Uncertain { .. }
+    ));
+    assert!(e.backend().status().await.unwrap().is_some());
+    assert!(e.backend().blocking().is_none());
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(!is_connected(&e.snapshot().state));
+    e.backend().drop_tunnel();
+    wait_for(&e, "unprotected retry refused", |s| {
+        matches!(s, ConnectionState::Failed { .. })
+    })
+    .await;
+    assert!(e.backend().status().await.unwrap().is_none());
+    assert_eq!(e.backend().ops(), ["activate", "deactivate"]);
+    e.disconnect().await.unwrap();
+    e.connect(id).await.unwrap();
+    assert!(e.backend().blocking().is_some());
+    e.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn protected_country_switch_is_refused_without_touching_tunnel_or_block() {
+    let (e, _dir, first) = ks_engine(false).await;
+    let second = e
+        .import_text(
+            "Destination simulated",
+            &CONF.replace("vpn.example.com", "198.51.100.7"),
+        )
+        .await
+        .unwrap()
+        .meta
+        .id;
+    e.update_server(first, server_update("SG")).await.unwrap();
+    e.update_server(second, server_update("DE")).await.unwrap();
+    e.connect(first).await.unwrap();
+    let before = e.backend().ops();
+    let err = e.connect(second).await.unwrap_err();
+    assert!(err.to_string().contains("protected switching"));
+    assert_eq!(
+        e.backend().ops(),
+        before,
+        "must neither remove nor replace the protected session"
+    );
+    assert_eq!(e.backend().blocking().unwrap().0, first);
+    assert_eq!(e.backend().status().await.unwrap().unwrap().id, first);
+    e.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn retrying_failed_protected_server_is_not_an_active_country_switch() {
+    let (e, _dir, id) = ks_engine(false).await;
+    e.backend().fail_next_activate("simulated startup failure");
+    assert!(e.connect(id).await.is_err());
+    assert!(matches!(e.snapshot().state, ConnectionState::Failed { .. }));
+    assert_eq!(e.backend().blocking().unwrap().0, id);
+    e.connect(id).await.unwrap();
+    assert_eq!(e.backend().blocking().unwrap().0, id);
+    assert!(is_connected(&e.snapshot().state));
+    assert!(!e.backend().ops().contains(&"remove"));
+    e.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn preferred_server_change_notifies_profile_consumers() {
+    let (e, _dir) = engine().await;
+    let id = e
+        .import_text("Simulated preference", CONF)
+        .await
+        .unwrap()
+        .meta
+        .id;
+    let mut events = e.subscribe();
+    let mut settings = e.settings();
+    settings.preferred_profile = Some(id);
+    e.set_settings(settings).unwrap();
+    assert!(matches!(
+        events.try_recv(),
+        Ok(EngineEvent::ProfilesChanged)
+    ));
+    assert!(e.profiles()[0].preferred);
+}
+
+#[tokio::test]
+async fn connect_explains_missing_backend_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let e = Engine::start(MockBackend::instant(), dir.path())
+        .await
+        .unwrap();
+    let id = e.import_text("Work", CONF).await.unwrap().meta.id;
+    // Fresh empty mock + same profiles.json: metadata without a backend config.
+    let e = Engine::start(MockBackend::instant(), dir.path())
+        .await
+        .unwrap();
+    let err = e.connect(id).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("simulated backend") && msg.contains("Re-import"),
+        "unexpected message: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn mock_store_keeps_configs_across_restarts() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("mock-backend");
+    let e = Engine::start(MockBackend::with_store(&store).unwrap(), dir.path())
+        .await
+        .unwrap();
+    let id = e.import_text("Work", CONF).await.unwrap().meta.id;
+    e.connect(id).await.unwrap();
+    e.disconnect().await.unwrap();
+    let e = Engine::start(MockBackend::with_store(&store).unwrap(), dir.path())
+        .await
+        .unwrap();
+    e.connect(id).await.unwrap();
+    assert!(is_connected(&e.snapshot().state));
+}
+
+// ---------- sleep/resume and network switching ----------
+
+fn peer_of(e: &Engine<MockBackend>) -> Option<PeerState> {
+    match e.snapshot().state {
+        ConnectionState::Connected { peer, .. } => Some(peer),
+        _ => None,
+    }
+}
+
+fn logged(e: &Engine<MockBackend>, needle: &str) -> bool {
+    e.events().iter().any(|l| l.message.contains(needle))
+}
+
+#[tokio::test(start_paused = true)]
+async fn network_change_discards_old_proof_until_the_server_answers_again() {
+    let (e, _d) = engine().await;
+    let id = e.import_text("Work", CONF).await.unwrap().meta.id;
+    e.connect(id).await.unwrap();
+    wait_for(&e, "confirmed", |s| {
+        matches!(
+            s,
+            ConnectionState::Connected {
+                peer: PeerState::Confirmed,
+                ..
+            }
+        )
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(20)).await; // past the tunnel's own start-up noise
+
+    e.backend().send_event(SystemEvent::NetworkChanged);
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    assert_eq!(
+        peer_of(&e),
+        Some(PeerState::Pending),
+        "old proof must not stand after a network switch"
+    );
+    assert!(logged(&e, "The network changed"));
+    assert!(
+        e.snapshot().reachability == Feature::Off,
+        "stale health results are cleared"
+    );
+
+    e.backend().peer_sends(1_000);
+    wait_for(&e, "confirmed again", |s| {
+        matches!(
+            s,
+            ConnectionState::Connected {
+                peer: PeerState::Confirmed,
+                ..
+            }
+        )
+    })
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn network_noise_from_our_own_activation_is_ignored() {
+    let (e, _d) = engine().await;
+    let id = e.import_text("Work", CONF).await.unwrap().meta.id;
+    e.connect(id).await.unwrap();
+    wait_for(&e, "confirmed", |s| {
+        matches!(
+            s,
+            ConnectionState::Connected {
+                peer: PeerState::Confirmed,
+                ..
+            }
+        )
+    })
+    .await;
+    e.backend().send_event(SystemEvent::NetworkChanged);
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    assert_eq!(peer_of(&e), Some(PeerState::Confirmed));
+    assert!(!logged(&e, "The network changed"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn resume_restarts_a_session_that_ran_out_of_retries() {
+    let (e, _d) = engine().await;
+    let id = e.import_text("Work", CONF).await.unwrap().meta.id;
+    let mut s = e.settings();
+    s.reconnect_max_attempts = 1;
+    e.set_settings(s).unwrap();
+    e.connect(id).await.unwrap();
+    wait_for(&e, "confirmed", |s| {
+        matches!(
+            s,
+            ConnectionState::Connected {
+                peer: PeerState::Confirmed,
+                ..
+            }
+        )
+    })
+    .await;
+
+    // Asleep: the tunnel disappears and the one retry fails with no network.
+    e.backend().drop_tunnel();
+    e.backend().fail_next_activate("network is unreachable");
+    wait_for(&e, "gave up", |s| {
+        matches!(s, ConnectionState::Failed { .. })
+    })
+    .await;
+
+    e.backend().send_event(SystemEvent::Resumed);
+    wait_for(&e, "reconnected after resume", is_connected).await;
+    assert!(logged(&e, "woke from sleep"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn resume_never_reconnects_what_the_user_ended_or_never_had() {
+    let (e, _d) = engine().await;
+    let id = e.import_text("Work", CONF).await.unwrap().meta.id;
+
+    // The user disconnected.
+    e.connect(id).await.unwrap();
+    e.disconnect().await.unwrap();
+    e.backend().send_event(SystemEvent::Resumed);
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    assert_eq!(e.snapshot().state, ConnectionState::Disconnected);
+
+    // The very first attempt failed: nothing was ever up.
+    e.backend().fail_next_activate("endpoint unreachable");
+    assert!(e.connect(id).await.is_err());
+    e.backend().send_event(SystemEvent::Resumed);
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    assert!(matches!(e.snapshot().state, ConnectionState::Failed { .. }));
+}
+
+#[tokio::test(start_paused = true)]
+async fn kill_switch_stays_on_through_sleep_and_resume() {
+    let (e, _d, id) = ks_engine(false).await;
+    let mut s = e.settings();
+    s.auto_reconnect = true; // ks_engine turns it off
+    s.reconnect_max_attempts = 1;
+    e.set_settings(s).unwrap();
+    e.connect(id).await.unwrap();
+    e.backend().drop_tunnel();
+    e.backend().fail_next_activate("network is unreachable");
+    wait_for(&e, "gave up", |s| {
+        matches!(s, ConnectionState::Failed { .. })
+    })
+    .await;
+    assert!(
+        e.backend().blocking().is_some(),
+        "blocked while asleep with no tunnel"
+    );
+
+    e.backend().send_event(SystemEvent::Resumed);
+    wait_for(&e, "reconnected after resume", is_connected).await;
+    assert!(
+        e.backend().blocking().is_some(),
+        "still blocking after resume"
+    );
+    assert!(matches!(
+        e.snapshot().protection.kill_switch,
+        Feature::Verified(_)
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_server_that_stops_answering_is_reported_and_recovers() {
+    let (e, _d) = engine().await;
+    let id = e.import_text("Work", CONF).await.unwrap().meta.id;
+    e.connect(id).await.unwrap();
+    // Answered once: confirmed by data received.
+    e.backend().peer_sends(1_000);
+    wait_for(&e, "confirmed", |s| {
+        matches!(
+            s,
+            ConnectionState::Connected {
+                peer: PeerState::Confirmed,
+                ..
+            }
+        )
+    })
+    .await;
+
+    // Idle is fine: nothing sent, nothing expected back.
+    tokio::time::sleep(Duration::from_secs(90)).await;
+    assert_eq!(
+        peer_of(&e),
+        Some(PeerState::Confirmed),
+        "an idle tunnel is not a dead one"
+    );
+
+    // Now the client keeps sending and nothing returns.
+    e.backend().client_sends(5_000);
+    wait_for(&e, "no response", |s| {
+        matches!(
+            s,
+            ConnectionState::Connected {
+                peer: PeerState::NoResponse,
+                ..
+            }
+        )
+    })
+    .await;
+    assert!(logged(&e, "stopped answering"));
+    assert!(
+        is_connected(&e.snapshot().state),
+        "the tunnel itself is kept"
+    );
+
+    e.backend().peer_sends(1_000);
+    wait_for(&e, "confirmed again", |s| {
+        matches!(
+            s,
+            ConnectionState::Connected {
+                peer: PeerState::Confirmed,
+                ..
+            }
+        )
+    })
+    .await;
 }
