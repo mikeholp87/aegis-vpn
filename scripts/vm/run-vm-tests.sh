@@ -56,7 +56,7 @@ SUITE="$ROOT/target/x86_64-unknown-linux-musl/release/examples/vm_suite"
 # 3. Run directory, SSH key, cloud-init seed.
 RUN="$(mktemp -d "${TMPDIR:-/tmp}/aegis-vm.XXXXXX")"
 QEMU_PID=""
-# shellcheck disable=SC2329 # invoked via trap
+# shellcheck disable=SC2317,SC2329 # invoked via trap (older shellcheck says SC2317)
 cleanup() {
 	if [[ ${KEEP_VM:-} != 1 && -n $QEMU_PID ]]; then
 		kill "$QEMU_PID" 2>/dev/null || true

@@ -133,7 +133,7 @@ down() {
 	# Read process ids from the kernel, never from caller-controlled runtime files.
 	local pid
 	while read -r pid; do
-		[[ $pid =~ ^[0-9]+$ ]] && kill -- "$pid" 2>/dev/null || true
+		if [[ $pid =~ ^[0-9]+$ ]]; then kill -- "$pid" 2>/dev/null || true; fi
 	done < <(ip netns pids "$NS" 2>/dev/null)
 	ip netns del "$NS" 2>/dev/null || true # also removes the veth pair
 	ip link del "$HOST_IF" 2>/dev/null || true
