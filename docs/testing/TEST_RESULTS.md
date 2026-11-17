@@ -2,6 +2,21 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-17 — deb now packages the kill-switch helper (build and contents only)
+
+Security review finding: the installed `.deb` shipped no helper or Polkit policy, so the
+kill switch reported Unsupported. `tauri.conf.json` now installs
+`/usr/libexec/aegis-vpn/aegis-helper` and the policy, adds `nftables` and `pkexec` to
+Depends and `wireguard-tools` to Recommends, and runs `aegis-helper remove` from
+`prerm` on remove/purge (not on upgrade). Run: `cargo build --release -p aegis-helper`,
+`pnpm tauri build --bundles deb` from a clean worktree, then `dpkg-deb -c/-f/-e`.
+Result: both files present (helper 0755, policy 0644), Depends/Recommends as above,
+`prerm` present and executable; `shellcheck` and `shfmt -d` pass on the new scripts.
+
+**Not run:** installing this package, a kill-switch run from the installed helper, the
+upgrade/uninstall paths of `prerm`, and the RPM bundle (config keys shared with the deb
+parsed, but no `rpm` bundle was built).
+
 ## 2026-11-17 — GitHub CI on the pushed commits (run 44034535510, head `15ecb99`)
 
 Passed: Rust fmt/clippy/tests (Linux), frontend lint/typecheck/tests, advisories and
