@@ -8,6 +8,9 @@ use aegis_core::{ConnectionState, Engine, EngineEvent, PeerState};
 use commands::AppState;
 use tauri::{DragDropEvent, Emitter, Manager, WindowEvent};
 
+/// Page zoom applied at startup; 1.2 turns the 13-14 px body text into ~16-17 px.
+const UI_ZOOM: f64 = 1.2;
+
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -45,6 +48,15 @@ pub fn run() {
                 tray_available,
             });
             forward_events(app.handle().clone(), Arc::clone(&engine));
+
+            // Larger text for readability: the UI uses fixed px sizes, so scale the
+            // whole page (text and spacing together) like browser zoom.
+            // Ctrl+= / Ctrl+- / Ctrl+0 adjust it further (zoomHotkeysEnabled).
+            if let Some(w) = app.get_webview_window("main")
+                && let Err(e) = w.set_zoom(UI_ZOOM)
+            {
+                tracing::warn!("could not set UI zoom: {e}");
+            }
 
             let s = engine.settings();
             if s.connect_on_launch

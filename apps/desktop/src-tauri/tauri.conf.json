@@ -14,11 +14,12 @@
       {
         "label": "main",
         "title": "Aegis VPN",
-        "width": 1100,
-        "height": 720,
-        "minWidth": 640,
-        "minHeight": 480,
-        "center": true
+        "width": 1280,
+        "height": 840,
+        "minWidth": 768,
+        "minHeight": 576,
+        "center": true,
+        "zoomHotkeysEnabled": true
       }
     ],
     "withGlobalTauri": false,
