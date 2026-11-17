@@ -1,0 +1,11 @@
+# Keep LF in the working tree on every platform. Biome's formatter and the
+# shell scripts (run on Linux and in the test VM) break on CRLF, and Windows
+# checkouts default to core.autocrlf=true.
+* text=auto eol=lf
+
+# Binary assets: never touch.
+*.png binary
+*.ico binary
+*.icns binary
+*.woff2 binary
+*.svg text
