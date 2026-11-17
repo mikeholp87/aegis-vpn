@@ -2,6 +2,80 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-17 — Windows service pipe server (`services/windows-service`), unelevated
+
+Windows 11 Pro, normal (non-elevated) user, so the server did **not** run as
+SYSTEM. 8 integration tests in `services/windows-service/tests/pipe.rs` pass, on
+unique test pipe names (never the production name), through the real
+`aegis_windows::call_pipe`/`open_client` client code:
+- `Hello` ok; wrong protocol version refused with a "reinstall" message.
+- `Capabilities` reports `WindowsService`, not simulated, and **every** capability
+  `Unsupported` (the skeleton claims nothing); `Install`, `Activate` and
+  `ApplyKillSwitch` return errors instead of pretending.
+- A second server cannot bind an owned pipe name (first-instance flag).
+- An oversized length prefix, a non-JSON frame and a connect-and-vanish client do
+  not stop the server; 20 requests on one connection and 16 parallel connections
+  work.
+- `production_dacl_is_applied_as_written`: the DACL read back from the pipe handle
+  is `D:P(D;;FA;;;NU)(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x12019b;;;IU)`, i.e. no silent
+  default DACL.
+- `users_cannot_add_a_pipe_instance`: with only the interactive-user ACE, creating
+  a second instance fails with `ACCESS_DENIED`.
+
+**Wrong assumption found and corrected:** I expected a client opening the pipe
+with `GENERIC_WRITE` to be denied because the DACL lacks
+`FILE_CREATE_PIPE_INSTANCE`. A throwaway probe showed every access mask opens
+(even `FILE_APPEND_DATA` alone). Windows enforces that right only when adding a
+server instance, which is the property we need (no fake instances). The probe was
+deleted; DECISIONS D16 and code comments state the measured behaviour.
+
+Also: `cargo fmt`, `cargo clippy --workspace --all-targets -D warnings` and
+`cargo test --workspace` pass; `cargo check -p aegis-service -p aegis-windows
+--target x86_64-unknown-linux-gnu` passes (the crate is an empty stub there; only
+type-checked, not tested or linted on Linux). `cargo audit` (1509 advisories): no
+vulnerabilities in 516 crates; 4 "unmaintained" warnings, all in the Linux
+zbus/zvariant/proc-macro-error stack that was already in the tree. `windows`
+0.62.2 (Microsoft) and `windows-service` 0.8.1 (Mullvad) have no advisories.
+
+**Not run:** the service under the Service Control Manager or as SYSTEM
+(`aegis-service service`; the SCM entry point is compiled only); the pipe as
+SYSTEM; a pipe client from a second user or a remote machine; the per-connection
+client check (not written); DPAPI, tunnel install, `tunnel.dll`, kill switch.
+`aegis-service console` was started by hand and the pipe appeared, nothing more.
+
+## 2026-11-17 — Windows 11 host, handoff Step 0 (toolchain and baseline)
+
+Host: Windows 11 Pro, Rust 1.99.1 (`stable-x86_64-pc-windows-msvc`), VS 2022
+Build Tools, WebView2 present, Node 26.13.1, pnpm 12.21.0 (installed globally;
+it was missing). Native, not cross-compiled.
+
+Passed natively: `cargo fmt --all --check`; `cargo clippy --workspace
+--all-targets -- -D warnings`; `cargo test --workspace` (config 22, core 61,
+desktop 2, helper 3, windows 9 = 97 passed; `aegis-linux` has 0 tests on
+Windows because its code is Linux-only); `cargo check -p aegis-desktop` (the
+Tauri build script failure seen when cross-checking from Linux does not occur
+natively). Frontend: `pnpm lint`, `pnpm typecheck`, `pnpm test` (28 passed).
+
+Found and fixed on this host:
+- **clippy `large_enum_variant` in `AnyBackend`** (`src-tauri/src/backend.rs`).
+  On Windows the Linux `Nm` variant is compiled out, leaving `MockBackend`
+  (312 bytes) beside 24-byte variants; Linux builds never saw it. `Mock` is now
+  boxed.
+- **CRLF checkouts broke `pnpm lint`** (Biome formatter wants LF; Git's
+  `core.autocrlf=true` default on Windows rewrote every file). Added
+  `.gitattributes` (`* text=auto eol=lf`), which also keeps the shell scripts
+  usable from a Windows checkout.
+
+Not explained: one `cargo test --workspace` run failed while compiling the
+third-party `indexmap` crate (rustc exit 1, no diagnostic captured). It did not
+recur on a rebuild and disk space was fine; treat as a one-off, not as fixed.
+
+**Not run:** `pnpm tauri dev` (with or without `AEGIS_BACKEND=mock`), so the
+UI has not been looked at on Windows; nothing about the pipe client against a
+live service; no service, tunnel, DPAPI, SCM, tunnel.dll or WFP code exists or
+ran. Biome prints a deprecation notice for `linter.recommended` in
+`biome.json` (not an error; not changed).
+
 ## 2026-11-17 — Windows backend, step 1 (protocol, naming, pipe client)
 
 Host (Linux): `cargo test -p aegis-windows` 9 passed: frame round trip, redacted
