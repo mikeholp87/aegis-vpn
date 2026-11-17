@@ -2,6 +2,28 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-17 — GitHub CI on the pushed commits (run 44034535510, head `15ecb99`)
+
+Passed: Rust fmt/clippy/tests (Linux), frontend lint/typecheck/tests, advisories and
+licenses (`cargo-deny`, `npm audit`). The previous run (`548523e`) had failed the
+Windows job on the `AnyBackend` `large_enum_variant` clippy error fixed in `a0b3345`;
+that step now passes.
+
+**Windows build job failed** at `cargo test --workspace --locked`: 1 failure,
+`store::a_directory_someone_else_created_is_refused`. Cause: the runner is an
+**elevated administrator**, so a directory the test creates is owned by
+Administrators (`BA`). The test's "wrong owner" case used the owner list
+`["SY","BA"]`, so the owner was accepted and the store correctly refused the
+inherited permissions instead ("unexpected permissions" rather than "unexpected
+owner"). A test assumption, not a product defect; it only held when unelevated. Fix:
+the case now uses an owner list that matches nobody. Passes locally (unelevated, 8/8
+store tests); **not yet re-run on CI**.
+
+Side benefit: everything else in that job passed as an administrator, not just as
+my unprivileged user: the 8 pipe tests (including `users_cannot_add_a_pipe_instance`
+and the production DACL read-back), the 4 service tests and 7 of 8 store tests.
+Still not SYSTEM, and still not under the SCM.
+
 ## 2026-11-17 — `aegis-tunnel` host exe: argument rules and loading tunnel.dll, unelevated
 
 New `aegis-tunnel.exe` (what each `WireGuardTunnel$aegis-…` service will run:
