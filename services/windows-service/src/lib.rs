@@ -9,13 +9,17 @@
 #![cfg_attr(not(windows), allow(unused))]
 
 #[cfg(windows)]
+pub mod dpapi;
+#[cfg(windows)]
 pub mod handler;
 #[cfg(windows)]
 pub mod security;
 #[cfg(windows)]
 pub mod server;
+#[cfg(windows)]
+pub mod store;
 
 #[cfg(windows)]
-pub use handler::{Handler, Skeleton};
+pub use handler::{Handler, Service, Skeleton};
 #[cfg(windows)]
 pub use server::serve;

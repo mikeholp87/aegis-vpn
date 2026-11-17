@@ -12,7 +12,7 @@ use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 use crate::handler::Handler;
-use crate::security::{PipeSecurity, create_server};
+use crate::security::{SecurityDescriptor, create_server};
 
 /// Connections served at once. One more instance is always listening.
 const MAX_CONNECTIONS: usize = 8;
@@ -56,7 +56,7 @@ const MAX_INSTANCES: usize = MAX_CONNECTIONS + 2;
 /// tells the Service Control Manager that it is running.
 pub struct PipeServer {
     name: String,
-    security: PipeSecurity,
+    security: SecurityDescriptor,
     listener: NamedPipeServer,
 }
 
@@ -64,12 +64,12 @@ impl PipeServer {
     /// Fails if any other process already owns the pipe name. Must be called
     /// inside a tokio runtime.
     pub fn bind(name: &str) -> io::Result<Self> {
-        Self::bind_with(name, PipeSecurity::production()?)
+        Self::bind_with(name, SecurityDescriptor::production()?)
     }
 
     /// Like [`bind`](Self::bind) with a caller-chosen DACL. Only tests pass
     /// anything but the production one.
-    pub fn bind_with(name: &str, security: PipeSecurity) -> io::Result<Self> {
+    pub fn bind_with(name: &str, security: SecurityDescriptor) -> io::Result<Self> {
         let listener = create_server(name, &security, true, MAX_INSTANCES)?;
         Ok(Self {
             name: name.to_owned(),

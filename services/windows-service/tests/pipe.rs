@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use aegis_core::{BackendKind, ProfileId, Support};
-use aegis_service::security::{IU_ACE, PRODUCTION_SDDL, PipeSecurity, create_server};
+use aegis_service::security::{IU_ACE, PRODUCTION_SDDL, SecurityDescriptor, create_server};
 use aegis_service::server::PipeServer;
 use aegis_service::{Handler, Skeleton};
 use aegis_windows::proto::{self, ErrorKind, Request, Response, SecretText};
@@ -42,8 +42,8 @@ fn unique_name() -> String {
 
 /// Production's ACEs, plus full control for the owner so an unelevated test
 /// process can create the follow-up pipe instances.
-fn test_security() -> PipeSecurity {
-    PipeSecurity::from_sddl(&format!(
+fn test_security() -> SecurityDescriptor {
+    SecurityDescriptor::from_sddl(&format!(
         "D:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GA;;;BA){IU_ACE}(A;;GA;;;OW)"
     ))
     .expect("test descriptor")
@@ -279,7 +279,7 @@ fn applied_sddl(handle: HANDLE) -> String {
 #[tokio::test]
 async fn production_dacl_is_applied_as_written() {
     let name = unique_name();
-    let security = PipeSecurity::from_sddl(PRODUCTION_SDDL).unwrap();
+    let security = SecurityDescriptor::from_sddl(PRODUCTION_SDDL).unwrap();
     let server = create_server(&name, &security, true, 4).unwrap();
     let sddl = applied_sddl(HANDLE(server.as_raw_handle()));
     // GA is expanded to FA (file all access) by Windows; the rest is verbatim.
@@ -297,7 +297,7 @@ async fn production_dacl_is_applied_as_written() {
 #[tokio::test]
 async fn users_cannot_add_a_pipe_instance() {
     let name = unique_name();
-    let security = PipeSecurity::from_sddl(&format!("D:P{IU_ACE}")).unwrap();
+    let security = SecurityDescriptor::from_sddl(&format!("D:P{IU_ACE}")).unwrap();
     // The first instance sets the DACL; creating it needs no rights on it.
     let _first = create_server(&name, &security, true, 4).unwrap();
     let second = create_server(&name, &security, false, 4);

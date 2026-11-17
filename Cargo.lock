@@ -85,14 +85,18 @@ dependencies = [
 name = "aegis-service"
 version = "0.1.0"
 dependencies = [
+ "aegis-config",
  "aegis-core",
  "aegis-windows",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "windows",
  "windows-service",
+ "zeroize",
 ]
 
 [[package]]

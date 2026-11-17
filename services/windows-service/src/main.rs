@@ -15,11 +15,13 @@ fn main() {
 #[cfg(windows)]
 mod app {
     use std::ffi::OsString;
+    use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::Duration;
 
     use aegis_service::server::PipeServer;
-    use aegis_service::{Skeleton, serve};
+    use aegis_service::store::{ConfigStore, DirPolicy};
+    use aegis_service::{Service, Skeleton, serve};
     use aegis_windows::proto::PIPE_NAME;
     use tokio_util::sync::CancellationToken;
     use windows_service::service::{
@@ -101,6 +103,14 @@ mod app {
         }
     }
 
+    /// `%ProgramData%\Aegis VPN`. The service runs as LocalSystem, whose
+    /// environment is set by Windows, not by a user.
+    fn config_dir() -> std::io::Result<PathBuf> {
+        let base = std::env::var_os("ProgramData")
+            .ok_or_else(|| std::io::Error::other("ProgramData is not set"))?;
+        Ok(PathBuf::from(base).join("Aegis VPN"))
+    }
+
     fn run_service() -> windows_service::Result<()> {
         let shutdown = CancellationToken::new();
         let on_stop = shutdown.clone();
@@ -114,14 +124,17 @@ mod app {
                 _ => ServiceControlHandlerResult::NotImplemented,
             })?;
 
-        // Report Running only once the pipe is really ours.
+        // Report Running only once the config directory is verified and the pipe
+        // is really ours.
         let outcome = runtime().and_then(|rt| {
             rt.block_on(async {
+                let store = ConfigStore::open(config_dir()?, &DirPolicy::production())
+                    .map_err(std::io::Error::other)?;
                 let server = PipeServer::bind(PIPE_NAME)?;
                 handle
                     .set_service_status(status(ServiceState::Running, 0))
                     .map_err(std::io::Error::other)?;
-                server.run(Arc::new(Skeleton), shutdown).await
+                server.run(Arc::new(Service::new(store)), shutdown).await
             })
         });
         handle.set_service_status(status(
