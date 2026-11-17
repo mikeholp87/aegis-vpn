@@ -24,11 +24,11 @@ crates/aegis-core     Engine (state machine, reconnect, recovery), VpnBackend tr
                       ProfileDraft, Store (non-secret JSON), registry (location metadata on profiles),
                       diagnostics, MockBackend
 crates/aegis-linux    NetworkManager backend over D-Bus (zbus), settings mapping
-crates/aegis-windows  Windows backend: pipe protocol + client (compiled, never run); service not written (D16)
+crates/aegis-windows  Windows backend: pipe protocol + client (round-trip tested against the service pipe; D16)
 apps/desktop          React UI (src/), Tauri shell (src-tauri/)
 scripts/              test-netns-peer.sh: isolated WireGuard peer for live tests
 services/linux-helper aegis-helper: the only root code (pkexec), kill-switch nftables table
-services/             windows-service: planned, not in workspace yet
+services/windows-service aegis-service: LocalSystem pipe server; today a Skeleton handler (no tunnels yet)
 ```
 
 ## Commands

@@ -185,7 +185,7 @@ uplink change: if it does not, the dashboard shows `NoResponse` but Aegis does
 not yet re-activate the tunnel by itself. *Revisit:* re-activate (keeping the
 block) when `NoResponse` follows a network change.
 
-## D16: Windows backend design (2026-11-17, partly implemented, none run on Windows)
+## D16: Windows backend design (2026-11-17; pipe layer run on Windows, the rest not)
 
 *Shape.* The app (unprivileged) holds `ServiceBackend`, a client of a LocalSystem
 service over the named pipe `\\.\pipe\aegis-vpn-service`: one 4-byte length +
@@ -205,8 +205,23 @@ The README does not say whether `tunnel.dll` reads encrypted configs, so the
 plan assumes a plaintext `.conf` exists only while the tunnel runs, in a
 SYSTEM-only directory, deleted at stop and at service start. **Unverified;
 decide when a Windows machine can confirm.**
-*Pipe security (planned).* DACL grants access to the interactive logged-on
-users, not Everyone; the service checks the client SID on every connection.
+*Pipe security (implemented, tested unelevated on Windows 11).* The pipe has an
+explicit protected DACL (`services/windows-service/src/security.rs`): deny network
+logons; SYSTEM and Administrators full; interactive users `0x12019b`
+(read/write minus `FILE_CREATE_PIPE_INSTANCE`). The first instance uses
+`FILE_FLAG_FIRST_PIPE_INSTANCE` and remote clients are rejected. **Measured:**
+Windows checks `FILE_CREATE_PIPE_INSTANCE` when a process creates a further
+instance with `CreateNamedPipe` (a user holding only the IU ACE gets
+`ACCESS_DENIED`), but does *not* check it when a client opens the pipe (every
+access mask opened, including `FILE_APPEND_DATA` alone). So users can talk to the
+service but cannot stand up a fake instance of its name. The client still opens
+with only read + `FILE_WRITE_DATA` at identification impersonation level (least
+privilege). The pipe is bounded: 8 concurrent connections, 30 s idle timeout,
+frames capped before allocation, mutating requests serialized by one lock, logs
+carry command names only. **Not done:** the per-connection check of the client's
+token/session; today any interactive local user may use the pipe. Running as
+SYSTEM (the production case) is untested; unelevated tests grant the owner an
+extra ACE so the server can create follow-up instances.
 *Kill switch (planned).* WFP filters under an Aegis-owned provider and sublayer,
 persistent so they can outlive the app and be removed by provider key. No
 firewall `netsh` shelling.

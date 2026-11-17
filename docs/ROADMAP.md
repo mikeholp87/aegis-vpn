@@ -27,10 +27,12 @@ Legend: [x] done and verified · [~] implemented, not fully verified · [ ] not 
 - [ ] React to NM signals instead of 2 s polling
 
 ## Phase D: Windows
-- [!] No Windows 11 machine available: nothing below has run on Windows (DECISIONS D16). Handoff: docs/development/WINDOWS_HANDOFF.md
-- [x] Pipe protocol (`aegis-windows::proto`) and tunnel naming (`names`): unit-tested on the Linux host
-- [~] `ServiceBackend` pipe client: compiles for x86_64-pc-windows-msvc, never run
-- [ ] `services/windows-service`: pipe server + DACL, DPAPI store, `WireGuardTunnel$aegis-…` install via SCM, status/handshake
+- [~] Windows 11 dev machine now available (unelevated; Hyper-V VM for disruptive tests not yet usable, needs admin rights). Handoff: docs/development/WINDOWS_HANDOFF.md
+- [x] Pipe protocol (`aegis-windows::proto`) and tunnel naming (`names`): unit-tested on Linux and Windows
+- [~] `ServiceBackend` pipe client: round trips against the real pipe server in tests (hello, capabilities, bad frames); nothing beyond `Hello`/`Capabilities` is implemented behind it
+- [x] `services/windows-service` pipe server: explicit DACL, first-instance flag, bounded connections, tested unelevated (8 tests). Handler is a `Skeleton` that reports everything `Unsupported`
+- [ ] Run the service as LocalSystem under the SCM (`aegis-service service`) and re-test the pipe as SYSTEM; per-connection client check
+- [ ] DPAPI store, `WireGuardTunnel$aegis-…` install via SCM, status/handshake
 - [ ] tunnel.dll + wireguard.dll build in CI, NSIS install/uninstall hooks
 - [ ] Windows kill switch (WFP, own provider/sublayer), DNS/IPv6 verification, sleep/resume, network change
 

@@ -15,14 +15,12 @@ mod imp {
     use std::net::SocketAddr;
     use std::time::Duration;
 
+    use crate::proto::{self, PIPE_NAME, Request, Response, SecretText};
     use aegis_config::WgConfig;
     use aegis_core::{
         Capabilities, CoreError, ProfileId, ProfileSummary, Protection, Result, Settings,
         TunnelStatus, VpnBackend,
     };
-    use tokio::net::windows::named_pipe::ClientOptions;
-
-    use crate::proto::{self, PIPE_NAME, Request, Response, SecretText};
 
     const ERROR_FILE_NOT_FOUND: i32 = 2;
     const ERROR_PIPE_BUSY: i32 = 231;
@@ -50,12 +48,47 @@ mod imp {
         }
     }
 
+    // Least privilege: ask only for read and write of data, not GENERIC_WRITE
+    // (which also carries FILE_CREATE_PIPE_INSTANCE). Measured: Windows does not
+    // check that right on a client open, so this is hygiene, not a requirement.
+    const FILE_GENERIC_READ: u32 = 0x0012_0089;
+    const FILE_WRITE_DATA: u32 = 0x0000_0002;
+    const FILE_FLAG_OVERLAPPED: u32 = 0x4000_0000;
+    const SECURITY_SQOS_PRESENT: u32 = 0x0010_0000;
+    /// The server may learn who we are but never act as us.
+    const SECURITY_IDENTIFICATION: u32 = 0x0001_0000;
+
+    #[allow(unsafe_code)]
+    pub fn open_client(
+        name: &str,
+    ) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeClient> {
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::IntoRawHandle;
+
+        let file = std::fs::OpenOptions::new()
+            .access_mode(FILE_GENERIC_READ | FILE_WRITE_DATA)
+            .custom_flags(FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION)
+            .open(name)?;
+        // SAFETY: the handle was just opened by us with FILE_FLAG_OVERLAPPED on a
+        // named pipe and ownership moves into the tokio client.
+        unsafe {
+            tokio::net::windows::named_pipe::NamedPipeClient::from_raw_handle(
+                file.into_raw_handle(),
+            )
+        }
+    }
+
     async fn call(req: Request) -> Result<Response> {
+        call_pipe(PIPE_NAME, req).await
+    }
+
+    /// One request/reply on `name`. `call` uses the real pipe; tests use their own.
+    pub async fn call_pipe(name: &str, req: Request) -> Result<Response> {
         tokio::time::timeout(CALL_TIMEOUT, async {
             // Every busy pipe instance is retried briefly; the service keeps a free instance.
             let mut pipe = None;
             for _ in 0..20 {
-                match ClientOptions::new().open(PIPE_NAME) {
+                match open_client(name) {
                     Ok(p) => {
                         pipe = Some(p);
                         break;
@@ -187,4 +220,4 @@ mod imp {
 }
 
 #[cfg(windows)]
-pub use imp::ServiceBackend;
+pub use imp::{ServiceBackend, call_pipe, open_client};
