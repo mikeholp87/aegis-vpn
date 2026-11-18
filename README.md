@@ -6,7 +6,7 @@ Rust, Tauri 2 and React. Working name.
 > **Status: pre-alpha.** The Linux NetworkManager backend has passed live
 > split-route tests on a desktop and full-tunnel, DNS-leak, IPv6, reconnect and
 > NetworkManager-restart tests in a Debian 13 VM. Linux kill-switch support
-> requires the helper supplied with the Linux packages. **Protected switching and the Windows
+> uses the bundled helper in DEB/RPM packages; **protected switching and the Windows
 > backend are not implemented**. This remains pre-alpha software. See [docs/ROADMAP.md](docs/ROADMAP.md) and
 > [docs/testing/TEST_RESULTS.md](docs/testing/TEST_RESULTS.md).
 
@@ -253,9 +253,10 @@ this project is not affiliated with the WireGuard project.
 ## Audit and preview packaging
 
 The current release classification is **Development Preview**. Linux uses the
-real NetworkManager backend. The DEB and RPM packages include the helper and
-matching Polkit policy for protected mode. Protected switching and Always On
-remain unavailable. The Windows
+real NetworkManager backend. The packaged desktop app supports standard mode.
+Linux DEB/RPM packages include the helper and matching Polkit policy for
+protected mode. Source builds can install them with the helper script.
+Protected switching and Always On remain unavailable. The Windows
 adapter stays offline until the authenticated tunnel service is implemented.
 
 For a self-hosted WireGuard endpoint, configure the server peer, UDP listener,
