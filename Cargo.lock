@@ -57,6 +57,7 @@ dependencies = [
  "tauri-plugin-autostart",
  "tauri-plugin-dialog",
  "tauri-plugin-single-instance",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -65,6 +66,10 @@ dependencies = [
 [[package]]
 name = "aegis-helper"
 version = "0.1.0"
+dependencies = [
+ "libc",
+ "tempfile",
+]
 
 [[package]]
 name = "aegis-linux"
@@ -75,6 +80,7 @@ dependencies = [
  "futures-util",
  "ipnet",
  "serde_json",
+ "socket2",
  "tokio",
  "tracing",
  "uuid",

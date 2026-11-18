@@ -272,6 +272,7 @@ pub struct Stats {
     pub rx_rate_bps: f64,
     pub tx_rate_bps: f64,
     pub last_handshake_ms: Option<u64>,
+    pub last_response_ms: Option<u64>,
     pub interface: Option<String>,
     pub sampled_ms: u64,
 }
@@ -368,6 +369,7 @@ pub enum EngineEvent {
     Snapshot(Box<Snapshot>),
     Log(LogEntry),
     ProfilesChanged,
+    SettingsChanged(Settings),
 }
 
 /// Something the operating system told the backend that the engine must react to.

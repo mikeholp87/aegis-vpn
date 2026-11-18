@@ -1,6 +1,6 @@
 //! Kill switch through the root helper (`services/linux-helper`), started
 //! with pkexec. The app itself never gains privileges: it passes validated
-//! arguments and reads an unprivileged marker file the helper maintains.
+//! arguments and asks the helper to inspect its kernel table.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -12,8 +12,6 @@ pub const POLICY: &str = "/usr/share/polkit-1/actions/org.aegisvpn.helper.policy
 const PKEXEC: &str = "/usr/bin/pkexec";
 const NFT: &str = "/usr/sbin/nft";
 const WG: &str = "/usr/bin/wg";
-/// Written by the helper while blocking; /run is cleared on reboot, like the rules.
-const MARKER: &str = "/run/aegis-vpn/kill-switch";
 
 pub fn support() -> Support {
     let missing: Vec<&str> = [
@@ -37,8 +35,28 @@ pub fn support() -> Support {
     }
 }
 
-pub fn active() -> bool {
-    Path::new(MARKER).is_file()
+pub async fn active() -> Result<bool> {
+    // Without an installed helper this backend cannot have installed a block.
+    if !Path::new(HELPER).exists() && !Path::new("/run/aegis-vpn/kill-switch").exists() {
+        return Ok(false);
+    }
+    parse_status(run_capture(vec!["status".into()]).await)
+}
+
+fn parse_status(reply: Result<String>) -> Result<bool> {
+    match reply {
+        Ok(text) if text.trim() == "1" => Ok(true),
+        Ok(text) if text.trim() == "0" => Ok(false),
+        Ok(_) => Err(CoreError::backend(
+            "reinstall the Aegis helper; firewall status was not understood",
+        )),
+        Err(CoreError::Backend { message }) if message.contains("usage: aegis-helper") => {
+            Err(CoreError::unsupported(
+                "the installed Aegis helper is too old; reinstall the helper binary and Polkit policy together",
+            ))
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Handshake times need the helper (root) and `wg`.
@@ -80,8 +98,8 @@ pub async fn run_capture(args: Vec<String>) -> Result<String> {
         Some(0) => Ok(String::from_utf8_lossy(&out.stdout).into_owned()),
         // pkexec: 126 = not authorized or dialog dismissed, 127 = authentication failed.
         Some(126 | 127) => Err(CoreError::PermissionDenied {
-            message: "permission to change the kill switch was refused. Polkit allows the user of the \
-                      active desktop session; remote or non-graphical sessions need an administrator."
+            message: "permission to use the Aegis helper was refused. Firewall changes need administrator \
+                      authentication; read-only checks are allowed for the active desktop user."
                 .into(),
         }),
         _ => {
@@ -89,5 +107,29 @@ pub async fn run_capture(args: Vec<String>) -> Result<String> {
             let msg = err.trim().trim_start_matches("aegis-helper: ");
             Err(CoreError::backend(format!("the kill-switch helper failed: {msg}")))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_requires_a_valid_reply_and_identifies_an_old_helper() {
+        assert!(parse_status(Ok("1\n".into())).unwrap());
+        assert!(!parse_status(Ok("0\n".into())).unwrap());
+        assert!(parse_status(Ok("unknown".into())).is_err());
+        assert!(matches!(
+            parse_status(Err(CoreError::backend(
+                "usage: aegis-helper apply ... | remove"
+            ))),
+            Err(CoreError::Unsupported { .. })
+        ));
+        assert!(matches!(
+            parse_status(Err(CoreError::PermissionDenied {
+                message: "denied".into()
+            })),
+            Err(CoreError::PermissionDenied { .. })
+        ));
     }
 }

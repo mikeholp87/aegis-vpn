@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# Disposable QEMU/KVM VM for Aegis VPN tests that change routing and DNS
+# Disposable QEMU VM for Aegis VPN tests that change routing and DNS
 # (full tunnel, DNS/IPv6 leaks, reconnect, NetworkManager restart).
 #
 #   scripts/vm/run-vm-tests.sh            # run the suite (full + full4)
 #   KEEP_VM=1 scripts/vm/run-vm-tests.sh  # leave the VM running afterwards for debugging
 #   AEGIS_VM_MODES="" KEEP_VM=1 scripts/vm/run-vm-tests.sh  # boot only, no suite
 #
-# Runs entirely as your normal user: needs /dev/kvm access, no root. The host
-# network is untouched (QEMU user-mode networking), and the VM disk is opened
-# with -snapshot so every run starts from the verified pristine image.
+# Runs as your normal user. Uses KVM when available, software emulation otherwise.
+# QEMU user-mode networking isolates the guest, and -snapshot preserves the image.
 #
 # Requires: qemu-system-x86_64, ssh, ssh-keygen, scp, python3, curl,
 # sha512sum, genisoimage (or mkisofs), cargo with the x86_64-unknown-linux-musl target.
@@ -34,8 +33,13 @@ for t in qemu-system-x86_64 ssh ssh-keygen scp python3 curl sha512sum cargo; do
 done
 MKISO="$(command -v genisoimage || command -v mkisofs || true)"
 [[ -n $MKISO ]] || die "genisoimage or mkisofs is required"
-[[ -w /dev/kvm ]] || die "no write access to /dev/kvm (add yourself to the kvm group)"
 [[ $EUID -ne 0 ]] || die "run as your normal user, not root"
+if [[ -w /dev/kvm ]]; then
+	CPU=(-accel kvm -cpu host)
+else
+	log "using software emulation (/dev/kvm unavailable)"
+	CPU=(-accel tcg -cpu max)
+fi
 
 # 1. Image: download once, verify against Debian's SHA512SUMS every run.
 mkdir -p "$CACHE"
@@ -70,6 +74,8 @@ cleanup() {
 	if [[ ${KEEP_VM:-} != 1 ]]; then rm -rf "$RUN"; fi
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 ssh-keygen -q -t ed25519 -N '' -C aegis-test-vm -f "$RUN/id"
 mkdir "$RUN/seed"
@@ -86,8 +92,8 @@ SSH_PORT="$(free_port)"
 # 4. Boot. User-mode networking (slirp). Name BOTH ipv4=on and ipv6=on: giving
 #    only one disables the other. SSH is forwarded to localhost only.
 log "booting VM (console log: $RUN/console.log)"
-qemu-system-x86_64 \
-	-enable-kvm -cpu host -m 2048 -smp 2 \
+TMPDIR="$RUN" qemu-system-x86_64 \
+	"${CPU[@]}" -m 2048 -smp 2 \
 	-drive "file=$IMG,if=virtio,format=qcow2" -snapshot \
 	-netdev "user,id=n0,ipv4=on,ipv6=on,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22" \
 	-device virtio-net-pci,netdev=n0 \
@@ -96,8 +102,9 @@ qemu-system-x86_64 \
 	-pidfile "$RUN/qemu.pid" -daemonize
 QEMU_PID="$(cat "$RUN/qemu.pid")"
 
-SSH=(ssh -i "$RUN/id" -p "$SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-	-o LogLevel=ERROR -o ConnectTimeout=5 aegis@127.0.0.1)
+SSH_OPTIONS=(-F /dev/null -i "$RUN/id" -o BatchMode=yes -o IdentitiesOnly=yes
+	-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5)
+SSH=(ssh -p "$SSH_PORT" "${SSH_OPTIONS[@]}" aegis@127.0.0.1)
 log "waiting for SSH"
 for _ in $(seq 1 120); do
 	"${SSH[@]}" true 2>/dev/null && break
@@ -111,8 +118,7 @@ log "waiting for cloud-init (installs NetworkManager, wireguard-tools, …)"
 }
 
 # 5. Copy and run.
-scp -q -i "$RUN/id" -P "$SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-	-o LogLevel=ERROR "$SUITE" "$ROOT/scripts/test-netns-peer.sh" "$HELPER" \
+scp -q -P "$SSH_PORT" "${SSH_OPTIONS[@]}" "$SUITE" "$ROOT/scripts/test-netns-peer.sh" "$HELPER" \
 	"$ROOT/services/linux-helper/org.aegisvpn.helper.policy" aegis@127.0.0.1:
 "${SSH[@]}" chmod +x vm_suite test-netns-peer.sh
 # Same paths a package installs (see scripts/install-helper.sh).

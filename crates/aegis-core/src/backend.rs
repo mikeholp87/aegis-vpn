@@ -76,8 +76,8 @@ pub trait VpnBackend: Send + Sync + 'static {
     fn remove_kill_switch(&self) -> impl Future<Output = Result<()>> + Send;
 
     /// Whether a block is installed right now, for example one left by a
-    /// previous run of the app.
-    fn kill_switch_active(&self) -> impl Future<Output = bool> + Send;
+    /// previous run of the app. Errors must not be treated as an absent block.
+    fn kill_switch_active(&self) -> impl Future<Output = Result<bool>> + Send;
 
     /// Light check that the server side can reach the internet, run when the
     /// tunnel comes up and then once a minute. Default: not tested (`Off`).

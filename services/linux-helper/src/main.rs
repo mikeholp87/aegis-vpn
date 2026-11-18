@@ -7,19 +7,24 @@
 //! aegis-helper apply <iface> [--allow-lan] <ip:port>...   install or replace the kill switch
 //! aegis-helper remove                                     delete the table (idempotent)
 //! aegis-helper handshake <iface>                          newest handshake time, read-only
+//! aegis-helper status                                     verified block state, read-only
 //! ```
 //!
 //! While applied, everything is blocked except loopback, the tunnel
 //! interface, UDP to the WireGuard endpoints, DHCP and IPv6 neighbour
 //! discovery (plus private/link-local ranges with `--allow-lan`). Rules live in
-//! the kernel, so they keep blocking if the app crashes; a marker file in
-//! /run (cleared on reboot, like the rules) lets the unprivileged app see that.
+//! the kernel, so they keep blocking if the app crashes. The status command
+//! inspects that kernel state directly, including after an interrupted apply.
 //!
 //! Every argument is validated before anything runs; the environment from
 //! pkexec is ignored and `nft` is called by absolute path with a clean env.
 
-use std::io::Write as _;
+#[cfg(unix)]
+use std::fs::OpenOptions;
+use std::fs::{self, File};
+use std::io::{self, Write as _};
 use std::net::SocketAddr;
+use std::path::Path;
 use std::process::{Command, ExitCode, Stdio};
 
 const TABLE: &str = "aegis_vpn";
@@ -41,6 +46,7 @@ enum Cmd {
         endpoints: Vec<SocketAddr>,
     },
     Remove,
+    Status,
     /// Print the newest peer handshake time (unix seconds, 0 = none yet).
     Handshake {
         iface: String,
@@ -50,6 +56,7 @@ enum Cmd {
 fn parse(args: &[String]) -> Result<Cmd, String> {
     match args.first().map(String::as_str) {
         Some("remove") if args.len() == 1 => Ok(Cmd::Remove),
+        Some("status") if args.len() == 1 => Ok(Cmd::Status),
         Some("handshake") if args.len() == 2 && valid_iface(&args[1]) => Ok(Cmd::Handshake {
             iface: args[1].clone(),
         }),
@@ -83,7 +90,7 @@ fn parse(args: &[String]) -> Result<Cmd, String> {
                 endpoints,
             })
         }
-        _ => Err("usage: aegis-helper apply <iface> [--allow-lan] <ip:port>... | remove".into()),
+        _ => Err("usage: aegis-helper apply <iface> [--allow-lan] <ip:port>... | remove | status | handshake <iface>".into()),
     }
 }
 
@@ -152,9 +159,12 @@ fn nft(args: &[&str], stdin: Option<&str>) -> Result<String, String> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("cannot run {NFT}: {e}; install nftables"))?;
-    if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
-        pipe.write_all(text.as_bytes())
-            .map_err(|e| format!("writing to nft: {e}"))?;
+    if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take())
+        && let Err(e) = pipe.write_all(text.as_bytes())
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("writing to nft: {e}"));
     }
     let out = child
         .wait_with_output()
@@ -162,8 +172,37 @@ fn nft(args: &[&str], stdin: Option<&str>) -> Result<String, String> {
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+        // nft can echo rules containing imported endpoint addresses.
+        Err(format!(
+            "nft {} failed ({}); check nftables permissions and firewall configuration",
+            args.join(" "),
+            out.status
+        ))
     }
+}
+
+fn installed_rules(listed: &str, iface: Option<&str>) -> bool {
+    let owned_iface = listed.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("oifname \"")?
+            .strip_suffix("\" accept")
+            .filter(|name| valid_iface(name))
+    });
+    owned_iface.is_some_and(|name| iface.is_none_or(|want| want == name))
+        && listed.contains("chain output {")
+        && listed.contains("type filter hook output")
+        && listed.contains("chain input {")
+        && listed.contains("type filter hook input")
+        && listed.matches("policy drop").count() == 2
+}
+
+fn table_exists(
+    nft: &mut impl FnMut(&[&str], Option<&str>) -> Result<String, String>,
+) -> Result<bool, String> {
+    let tables = nft(&["list", "tables"], None)?;
+    Ok(tables
+        .lines()
+        .any(|line| line.trim() == format!("table inet {TABLE}")))
 }
 
 /// Newest handshake in `wg show <iface> latest-handshakes` output
@@ -189,51 +228,109 @@ fn wg_latest_handshakes(iface: &str) -> Result<String, String> {
     }
 }
 
-fn is_root() -> bool {
+fn effective_uid() -> Option<u32> {
     // Effective uid is the second field of the Uid line.
-    std::fs::read_to_string("/proc/self/status").is_ok_and(|s| {
+    fs::read_to_string("/proc/self/status").ok().and_then(|s| {
         s.lines()
             .find_map(|l| l.strip_prefix("Uid:"))
-            .and_then(|v| v.split_whitespace().nth(1).map(|u| u == "0"))
-            .unwrap_or(false)
+            .and_then(|v| v.split_whitespace().nth(1)?.parse().ok())
     })
+}
+
+#[cfg(unix)]
+fn state_file(path: &Path, mode: u32) -> io::Result<File> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(mode)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() || Some(meta.uid()) != effective_uid() || meta.nlink() != 1 {
+        return Err(io::Error::other("unsafe helper state file"));
+    }
+    file.set_permissions(fs::Permissions::from_mode(mode))?;
+    Ok(file)
+}
+
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn lock_runtime(dir: &Path) -> io::Result<File> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    match fs::DirBuilder::new().mode(0o755).create(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e),
+    }
+    let meta = fs::symlink_metadata(dir)?;
+    if !meta.is_dir() || Some(meta.uid()) != effective_uid() {
+        return Err(io::Error::other("unsafe helper runtime directory"));
+    }
+    // Fix old permissive directories before opening any entries inside them.
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o755))?;
+    let lock = state_file(&dir.join("operation.lock"), 0o600)?;
+    // SAFETY: flock only uses this live descriptor; closing File releases the lock.
+    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(lock)
+}
+
+#[cfg(not(unix))]
+fn lock_runtime(_dir: &Path) -> io::Result<File> {
+    Err(io::Error::other("the helper requires Linux"))
+}
+
+fn apply(
+    iface: &str,
+    allow_lan: bool,
+    endpoints: &[SocketAddr],
+    dir: &Path,
+    mut nft: impl FnMut(&[&str], Option<&str>) -> Result<String, String>,
+) -> Result<(), String> {
+    let _lock = lock_runtime(dir).map_err(|e| format!("cannot lock helper state; retry: {e}"))?;
+    nft(&["-f", "-"], Some(&ruleset(iface, allow_lan, endpoints)))?;
+    // A failed readback keeps the fail-closed block, which status can rediscover.
+    let listed = nft(&["list", "table", "inet", TABLE], None)
+        .map_err(|e| format!("cannot verify the installed block; choose Stop blocking: {e}"))?;
+    if !installed_rules(&listed, Some(iface)) {
+        return Err("rules did not read back as installed; choose Stop blocking".into());
+    }
+    Ok(())
 }
 
 fn run(cmd: Cmd) -> Result<(), String> {
     match cmd {
+        Cmd::Status => {
+            if !table_exists(&mut nft)? {
+                println!("0");
+                return Ok(());
+            }
+            let listed = nft(&["list", "table", "inet", TABLE], None)?;
+            if !installed_rules(&listed, None) {
+                return Err("the Aegis firewall table could not be verified; choose Disconnect to remove it".into());
+            }
+            println!("1");
+            Ok(())
+        }
         Cmd::Apply {
             iface,
             allow_lan,
             endpoints,
-        } => {
-            nft(&["-f", "-"], Some(&ruleset(&iface, allow_lan, &endpoints)))?;
-            // Read back: report success only for rules the kernel actually holds.
-            let listed = nft(&["list", "table", "inet", TABLE], None)?;
-            let want = format!("oifname \"{iface}\" accept");
-            if !(listed.contains(&want) && listed.matches("policy drop").count() == 2) {
-                let _ = nft(&["delete", "table", "inet", TABLE], None);
-                return Err("rules did not read back as installed; removed them".into());
-            }
-            // The app learns about a block (e.g. after a crash) only from the
-            // marker, so a block without one must not be left behind.
-            let marked = std::fs::create_dir_all(MARKER_DIR)
-                .and_then(|()| std::fs::write(MARKER, format!("{iface}\n")))
-                .map_err(|e| format!("{MARKER}: {e}"));
-            if marked.is_err() {
-                let _ = nft(&["delete", "table", "inet", TABLE], None);
-            }
-            marked
-        }
+        } => apply(&iface, allow_lan, &endpoints, Path::new(MARKER_DIR), nft),
         Cmd::Handshake { iface } => {
             println!("{}", newest_handshake(&wg_latest_handshakes(&iface)?));
             Ok(())
         }
         Cmd::Remove => {
-            match nft(&["delete", "table", "inet", TABLE], None) {
-                Ok(_) => {}
-                // Already gone is success: remove is idempotent.
-                Err(e) if e.contains("No such file") => {}
-                Err(e) => return Err(e),
+            let _lock = lock_runtime(Path::new(MARKER_DIR))
+                .map_err(|e| format!("cannot lock helper state; retry: {e}"))?;
+            if table_exists(&mut nft)? {
+                nft(&["delete", "table", "inet", TABLE], None)?;
             }
             match std::fs::remove_file(MARKER) {
                 Ok(()) => Ok(()),
@@ -247,7 +344,7 @@ fn run(cmd: Cmd) -> Result<(), String> {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = parse(&args).and_then(|cmd| {
-        if !is_root() {
+        if effective_uid() != Some(0) {
             return Err("must run as root (through pkexec)".into());
         }
         run(cmd)
@@ -285,9 +382,11 @@ mod tests {
             })
         );
         assert_eq!(parse(&args("remove")), Ok(Cmd::Remove));
+        assert_eq!(parse(&args("status")), Ok(Cmd::Status));
         for bad in [
             "",
             "remove extra",
+            "status extra",
             "apply",
             "apply eth0 1.2.3.4:51820",
             "apply aegis-0B1E8A3C 1.2.3.4:51820",
@@ -350,5 +449,99 @@ mod tests {
         assert!(r.contains("ip6 daddr 2001:db8::1 udp dport 443 accept"));
         assert!(!r.contains("192.168.0.0/16"), "LAN blocked unless asked");
         assert!(ruleset("aegis-0b1e8a3c", true, &eps).contains("192.168.0.0/16"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_paths_reject_links_and_hold_one_kernel_lock() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("state");
+        fs::create_dir(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).unwrap();
+        let lock = lock_runtime(&dir).unwrap();
+        assert_eq!(
+            fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert_eq!(
+            lock_runtime(&dir).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        drop(lock);
+        drop(lock_runtime(&dir).unwrap());
+
+        let victim = temp.path().join("victim");
+        fs::write(&victim, "unchanged").unwrap();
+        let link = dir.join("operation.lock");
+        fs::remove_file(&link).unwrap();
+        symlink(&victim, &link).unwrap();
+        assert!(lock_runtime(&dir).is_err());
+        fs::remove_file(&link).unwrap();
+        fs::hard_link(&victim, &link).unwrap();
+        assert!(lock_runtime(&dir).is_err());
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "unchanged");
+        let linked_dir = temp.path().join("linked");
+        symlink(&dir, &linked_dir).unwrap();
+        assert!(lock_runtime(&linked_dir).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verification_failure_keeps_the_block_removable() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("state");
+        let mut calls = Vec::new();
+        let err = apply("aegis-0b1e8a3c", false, &[], &dir, |argv, _| {
+            calls.push(argv.join(" "));
+            match calls.len() {
+                1 => Ok(String::new()),
+                2 => Err("readback failed".into()),
+                _ => panic!("must not remove a fail-closed block"),
+            }
+        })
+        .unwrap_err();
+        assert!(err.contains("Stop blocking"), "{err}");
+        assert_eq!(calls.len(), 2);
+        assert!(!dir.join("kill-switch").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_never_writes_through_a_legacy_marker() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("state");
+        fs::create_dir(&dir).unwrap();
+        let victim = temp.path().join("victim");
+        fs::write(&victim, "unchanged").unwrap();
+        symlink(&victim, dir.join("kill-switch")).unwrap();
+        let mut call = 0;
+        apply("aegis-0b1e8a3c", false, &[], &dir, |_, _| {
+            call += 1;
+            match call {
+                1 => Ok(String::new()),
+                2 => Ok(ruleset("aegis-0b1e8a3c", false, &[])),
+                _ => panic!("unexpected nft call"),
+            }
+        })
+        .unwrap();
+        assert_eq!(call, 2);
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "unchanged");
+    }
+
+    #[test]
+    fn inspection_never_treats_command_errors_as_an_absent_table() {
+        let err = table_exists(&mut |_, _| Err("cannot run nft: No such file or directory".into()));
+        assert!(err.is_err());
+        assert!(!table_exists(&mut |_, _| Ok("table inet aegis_vpn_other\n".into())).unwrap());
+        assert!(table_exists(&mut |_, _| Ok("table inet aegis_vpn\n".into())).unwrap());
+        let rules = ruleset("aegis-0b1e8a3c", false, &[]);
+        assert!(installed_rules(&rules, None));
+        assert!(!installed_rules(&rules, Some("aegis-01234567")));
+        assert!(!installed_rules(
+            &rules.replace("policy drop", "policy accept"),
+            None
+        ));
     }
 }

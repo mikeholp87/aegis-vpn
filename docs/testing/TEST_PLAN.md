@@ -13,7 +13,8 @@ pnpm audit (CI). Run Gitleaks only when explicitly requested.
 4. `sudo scripts/test-netns-peer.sh down`
 
 ## VM only (disruptive): `scripts/vm/run-vm-tests.sh`
-Runs as your normal user (needs `/dev/kvm`), never touches host networking.
+Runs as your normal user. QEMU uses KVM when available and software emulation
+otherwise. Routing and firewall changes stay inside the guest.
 Boots the SHA512-verified Debian 13 cloud image with `-snapshot` under QEMU
 user-mode networking, provisions it with cloud-init (NetworkManager,
 systemd-resolved, wireguard-tools, dnsmasq, tcpdump), copies a static musl
@@ -23,9 +24,9 @@ systemd-resolved, wireguard-tools, dnsmasq, tcpdump), copies a static musl
 - connect + server response confirmed
 - IPv4 internet route via the tunnel; endpoint route stays outside it
 - ping an IPv4 sentinel that exists only behind the tunnel
-- `full`: IPv6 route via the tunnel + IPv6 sentinel ping; `full4`: IPv6
-  bypasses the tunnel and the app reports IPv6 protection as Failed
-- DNS protection reported as Configured
+- `full`: IPv6 route via the tunnel and IPv6 sentinel ping
+- `full4`: IPv6 stays off the uplink and the app verifies the block
+- DNS protection reported as Verified
 - DNS leak: positive control (lookups visible on the uplink before connecting),
   then both resolved and libc lookups answered by the tunnel's DNS (sentinel
   answer) with 0 port-53 packets on the uplink
@@ -35,8 +36,9 @@ systemd-resolved, wireguard-tools, dnsmasq, tcpdump), copies a static musl
   to the pre-connect baseline; no leftover NM connection
 
 `KEEP_VM=1` leaves the VM running and prints the SSH command.
-The extended suite also checks the optional Linux helper block; see current test
-results for its environment and scope. Still pending: protected country switching,
+The extended suite checks the optional Linux helper block. It exercises kernel
+status before apply, startup recovery after the tunnel drops, and cleanup.
+Still pending: protected country switching,
 suspend/resume, reboot with the tunnel active, Wi-Fi/uplink changes.
 
 ## Release matrix
@@ -66,8 +68,8 @@ The VM suite now switches between two country-labelled profiles of one
 controlled peer, confirms responses and sentinel traffic, switches back and
 deletes the destination. It preserves the existing full/full4 route/DNS/IPv6/
 reconnect/NM-restart/restoration checks. These labels do not prove geographic
-location or independent remote-server deployment. Run on a KVM-capable Linux
-host via `scripts/vm/run-vm-tests.sh`, or dispatch the separate
+location or independent remote-server deployment. Run on Linux via
+`scripts/vm/run-vm-tests.sh`, or dispatch the separate
 `.github/workflows/vpn-integration.yml` workflow. Record all failures, including
 known NM restart/firewall behavior, without broad expected-failure exemptions.
 
@@ -78,3 +80,20 @@ Windows CI compilation/portable tests do not substitute for an implemented
 Windows service, authenticated IPC/DPAPI tests and a Windows 11 real tunnel.
 No protected-switch success can be accepted until continuous protection across
 transitions and helper failure paths is implemented and tested. Update TEST_RESULTS with environment and actual evidence.
+
+## Release evidence matrix
+
+| Platform | Target desktop | Current evidence | Required before release |
+|---|---|---|---|
+| Debian 13 | KDE Plasma | NetworkManager VM and earlier desktop testing. The VM uses an SSH test user and a test Polkit rule | Clean package upgrade/removal, native Polkit prompt, real suspend/reboot and physical link transitions |
+| Ubuntu LTS | GNOME | Native-hosted CI configuration and build dependencies | Clean install/upgrade/remove, full DNS/IPv6, helper authorization and fail-closed captures |
+| Fedora Workstation | GNOME | RPM build configured | Native RPM lifecycle, NetworkManager and firewalld coexistence, DNS/IPv6 and protected loss captures |
+| Windows 11 x64 | Native | Portable protocol tests and Windows-target Rust checks | Authenticated service, native install/upgrade/remove, WFP and routing/DNS/IPv6 acceptance |
+
+Each native run records OS release, desktop, network backend, profile family,
+installer version and commit. Use controlled peers and an independent guest
+console. Capture physical-interface traffic with a positive control before
+testing. Repeat after a connection failure, DHCP/interface change, DNS
+change, IPv6 route change, country switch, GUI termination, backend restart
+and reboot. Compare routes, rules, resolvers, installed services and owned
+firewall state to the baseline after authorized disconnect and uninstall.

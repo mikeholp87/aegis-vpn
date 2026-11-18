@@ -66,12 +66,13 @@ pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let tmp = dir.join(format!(
         ".{}.tmp-{}",
         file_name.to_string_lossy(),
-        std::process::id()
+        uuid::Uuid::new_v4()
     ));
+    let mut f = open_private(&tmp).map_err(CoreError::storage)?;
     let res = (|| -> std::io::Result<()> {
-        let mut f = open_private(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
+        drop(f);
         fs::rename(&tmp, path)
     })();
     if res.is_err() {

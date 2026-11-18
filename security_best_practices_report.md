@@ -3,6 +3,45 @@
 Date: 2026-11-16  
 Revision reviewed: `b93f017270cb58b9f2da64e0086a7260ab2bf239`
 
+## Linux helper follow-up — 2026-11-17
+
+Reviewed the privileged helper and its installer against `548523e`, including
+native callers, Polkit actions and recovery/error handling. Source fixes are
+implemented. On 2026-11-18, the updated helper and policy ran in the Debian VM.
+Both tunnel modes recovered the firewall block from the kernel after a drop and
+confirmed its removal after Disconnect. The guest used a test Polkit rule.
+Desktop authentication prompts remain untested.
+
+| ID | Severity | Finding and fix |
+|---|---|---|
+| 11 | High | Caller umask could produce a writable root runtime directory; marker writes followed links. Removed marker writes; the directory is owned/permission-checked, lock opens reject symlinks, nonregular files and multiple hard links. |
+| 12 | Medium | Separate helper invocations could interleave firewall changes and state publication. A persistent kernel file lock now covers each mutation; kernel inspection replaces marker publication. |
+| 13 | Medium | Password-free firewall changes affected every local user, contrary to the documented user-only scope. Per the user's decision, apply/remove now require administrator authentication; read-only status/handshake have separate argv1-scoped actions. |
+| 14 | Medium | Uninstall ignored failed cleanup and could remove the only cleanup tool. It now aborts and retains the helper/policy; a successful list-tables query distinguishes absence from command errors. |
+| 15 | Medium | Readback failure could remove a previous fail-closed block; interruptions could leave a block without a marker. Readback failures preserve rules; startup and failed operations inspect the kernel, including blocks without markers. |
+| 16 | Medium | Inspection errors became false absence, and a post-removal marker error left a false Verified claim. Backend `Result<bool>` preserves errors; core records unknown state, rechecks partial failures and keeps Disconnect retryable. |
+| 17 | Low | nft diagnostics could echo imported endpoint addresses through IPC. The helper reports operation status and remediation without returning the rule body. |
+
+Implementation: `services/linux-helper/src/main.rs:184` (inspection), `:241`
+(descriptor checks), `:261` (lock), `:288` (apply);
+`services/linux-helper/org.aegisvpn.helper.policy:9` (authorization);
+`scripts/install-helper.sh:22` (uninstall gate);
+`crates/aegis-core/src/engine.rs:49` (unknown firewall state).
+
+Validation: helper filesystem/lock and injected-nft tests, core failure tests,
+wrapper propagation, policy XML checks, uninstall stub checks and the null-profile
+Disconnect UI regression. The cleanup-after-removal regression failed before
+the fix and passed afterward. Final commands/results are recorded in
+[TEST_RESULTS.md](docs/testing/TEST_RESULTS.md).
+
+Upgrade both the helper binary and policy together using the existing installer.
+The new app expects `status`; an older helper leaves inspection explicitly
+unknown. Custom Polkit rules referencing the old action ID must be updated to
+the separate apply/remove IDs. See [README.md](README.md#linux-helper-install-or-upgrade).
+The Polkit first-argument scoping follows its
+[official pkexec documentation](https://www.freedesktop.org/software/polkit/docs/latest/pkexec.1.html);
+kernel locking follows [flock(2)](https://man7.org/linux/man-pages/man2/flock.2.html).
+
 ## Integration follow-up — 2026-11-17
 
 The later kill-switch integration added two gaps in the core engine: cancelling

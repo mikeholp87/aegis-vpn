@@ -2,8 +2,6 @@
 //! explicitly requested with `AEGIS_BACKEND=mock`; if no real backend works we
 //! report that instead of silently pretending.
 
-use std::path::Path;
-
 use aegis_config::WgConfig;
 use aegis_core::mock::MockBackend;
 use aegis_core::{
@@ -21,16 +19,10 @@ pub enum AnyBackend {
     Unavailable(String),
 }
 
-pub async fn select(data_dir: &Path) -> AnyBackend {
+pub async fn select() -> AnyBackend {
     if std::env::var("AEGIS_BACKEND").as_deref() == Ok("mock") {
         tracing::warn!("using the simulated backend (AEGIS_BACKEND=mock)");
-        return match MockBackend::with_store(data_dir.join("mock-backend")) {
-            Ok(b) => AnyBackend::Mock(Box::new(b)),
-            Err(e) => {
-                tracing::error!("mock store unavailable ({e}); using in-memory mock only");
-                AnyBackend::Mock(Box::default())
-            }
-        };
+        return AnyBackend::Mock(Box::default());
     }
     #[cfg(target_os = "linux")]
     {
@@ -184,14 +176,14 @@ impl VpnBackend for AnyBackend {
         delegate!(self, b => b.remove_kill_switch().await)
     }
 
-    async fn kill_switch_active(&self) -> bool {
+    async fn kill_switch_active(&self) -> Result<bool> {
         match self {
             AnyBackend::Mock(b) => b.kill_switch_active().await,
             #[cfg(target_os = "linux")]
             AnyBackend::Nm(b) => b.kill_switch_active().await,
             #[cfg(windows)]
             AnyBackend::Win(b) => b.kill_switch_active().await,
-            AnyBackend::Unavailable(_) => false,
+            AnyBackend::Unavailable(_) => Ok(false),
         }
     }
 
@@ -219,9 +211,17 @@ mod tests {
         let id = ProfileId::new();
         let ep = ["203.0.113.5:51820".parse().unwrap()];
         b.apply_kill_switch(id, &ep, false).await.unwrap();
-        assert!(b.kill_switch_active().await);
+        assert!(b.kill_switch_active().await.unwrap());
         b.remove_kill_switch().await.unwrap();
-        assert!(!b.kill_switch_active().await);
+        assert!(!b.kill_switch_active().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn firewall_inspection_errors_reach_the_caller() {
+        let mock = MockBackend::with_test_kill_switch();
+        mock.fail_kill_switch_status(true);
+        let backend = AnyBackend::Mock(Box::new(mock));
+        assert!(backend.kill_switch_active().await.is_err());
     }
 
     #[tokio::test]
@@ -232,7 +232,7 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert!(!b.kill_switch_active().await);
+        assert!(!b.kill_switch_active().await.unwrap());
         assert!(b.remove_kill_switch().await.is_ok());
     }
 }

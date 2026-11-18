@@ -17,3 +17,10 @@
    outside `tests/fixtures`).
 
 Contributions are dual-licensed MIT OR Apache-2.0.
+
+Record the exact validation commands and environments in
+[TEST_RESULTS.md](docs/testing/TEST_RESULTS.md). Full-tunnel, firewall and
+failure-injection tests belong in the disposable VM. Release promotion requires
+the [release checklist](docs/releases/RELEASE_CHECKLIST.md) and the applicable
+native platform evidence. Keep real WireGuard configs and keys out of tests
+and reports.

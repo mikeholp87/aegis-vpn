@@ -39,3 +39,5 @@ connection rather than silently falling back. Destination validation precedes
 teardown, and failed cleanup produces an explicit Uncertain state. Windows
 service support and full live cross-platform acceptance are pending; see
 `docs/features/LOCATIONS.md` and the test results.
+
+See the [gap audit](docs/audits/FULL_GAP_AUDIT.md) and [recovery guide](docs/security/RECOVERY.md) for current enforcement limits.

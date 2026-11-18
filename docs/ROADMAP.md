@@ -29,7 +29,7 @@ Legend: [x] done and verified · [~] implemented, not fully verified · [ ] not 
 ## Phase D: Windows
 - [~] Windows 11 dev machine now available (unelevated; Hyper-V VM for disruptive tests not yet usable, needs admin rights). Handoff: docs/development/WINDOWS_HANDOFF.md
 - [x] Pipe protocol (`aegis-windows::proto`) and tunnel naming (`names`): unit-tested on Linux and Windows
-- [~] `ServiceBackend` pipe client: round trips against the real pipe server in tests (hello, capabilities, bad frames); nothing beyond `Hello`/`Capabilities` is implemented behind it
+- [~] The Windows client and service have pipe round-trip tests. Desktop selection remains disabled while server authentication is pending.
 - [x] `services/windows-service` pipe server: explicit DACL, first-instance flag, bounded connections, tested unelevated (8 tests). Handler is a `Skeleton` that reports everything `Unsupported`
 - [ ] Run the service as LocalSystem under the SCM (`aegis-service service`) and re-test the pipe as SYSTEM; per-connection client check
 - [x] DPAPI config store in the `tunnel.dll` format (`<name>.conf.dpapi`), directory ACL verified, service-side re-validation: tested unelevated; not yet as SYSTEM or read by `tunnel.dll`
@@ -41,7 +41,8 @@ Legend: [x] done and verified · [~] implemented, not fully verified · [ ] not 
 
 ## Phase E: security
 - [~] `aegis-helper` (pkexec + Polkit) with nftables `inet aegis_vpn` kill switch (DECISIONS D14); VM results in TEST_RESULTS
-- [ ] Ship the helper and Polkit policy in deb/rpm bundles (today: `scripts/install-helper.sh`)
+- [~] Helper hardening verified in the Debian VM with a test Polkit rule (2026-11-18). Desktop administrator prompts remain untested.
+- [~] Include the helper and Polkit policy in DEB/RPM bundles. Native package lifecycle verification remains pending.
 - [ ] Kill switch: forward chain for containers/VMs, hostname endpoints
 - [ ] Helper: detect leaked NetworkManager anti-spoofing rules for the active tunnel address and warn in Diagnostics/Dashboard; never remove them (DECISIONS D11)
 - [ ] Report the NM rule leak upstream (check whether NM ≥1.52.2 / 1.58 still has it)
@@ -75,3 +76,5 @@ Per-app split tunnelling, advanced DNS, profile groups, backups, provisioning.
 
 See `docs/features/LOCATIONS.md`; the full cross-platform acceptance criteria
 remain incomplete until those platform/protection checks exist and pass.
+
+- Audit/remediation and current release evidence: [FULL_GAP_AUDIT](audits/FULL_GAP_AUDIT.md), [REMAINING_GAPS](audits/REMAINING_GAPS.md).

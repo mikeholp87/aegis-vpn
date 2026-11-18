@@ -50,8 +50,10 @@ pub fn probe(dest: IpAddr, tunnel_addrs: &[IpAddr]) -> RouteProbe {
 /// How this system resolves names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolver {
-    /// systemd-resolved: its `Domains` property, as (ifindex, domain, routing-only).
-    Resolved(Vec<(i32, String, bool)>),
+    Resolved {
+        domains: Vec<(i32, String, bool)>,
+        dns: Vec<(i32, i32, Vec<u8>)>,
+    },
     /// `/etc/resolv.conf` with these nameservers (NetworkManager writes it directly).
     Plain(Vec<IpAddr>),
     /// Could not be determined; the reason is shown to the user.
@@ -95,7 +97,7 @@ pub fn judge_dns(
         return Feature::Failed("the profile's DNS servers have no route".into());
     }
     match resolver {
-        Resolver::Resolved(domains) => {
+        Resolver::Resolved { domains, dns } => {
             let Some(tun) = tunnel_ifindex else {
                 return Feature::Configured(
                     "could not identify the tunnel interface to check systemd-resolved".into(),
@@ -119,6 +121,23 @@ pub fn judge_dns(
                         .into(),
                 );
             }
+            let mut link_dns = dns
+                .iter()
+                .filter(|(ifindex, _, _)| *ifindex == tun)
+                .peekable();
+            if link_dns.peek().is_none()
+                || !link_dns.all(|(_, family, bytes)| {
+                    servers.iter().any(|(addr, route)| {
+                        *route == RouteProbe::Tunnel
+                            && match addr {
+                                IpAddr::V4(v4) => *family == 2 && bytes.as_slice() == v4.octets(),
+                                IpAddr::V6(v6) => *family == 10 && bytes.as_slice() == v6.octets(),
+                            }
+                    })
+                })
+            {
+                return Feature::Failed("systemd-resolved has missing or unexpected tunnel DNS servers; check resolvectl status".into());
+            }
             let mut local: Vec<&str> = domains
                 .iter()
                 .filter(|(i, d, _)| *i != tun && !d.trim_end_matches('.').is_empty())
@@ -126,8 +145,7 @@ pub fn judge_dns(
                 .collect();
             local.sort_unstable();
             local.dedup();
-            let base = "systemd-resolved sends all lookups to the tunnel's DNS servers, which are routed \
-                        through the tunnel";
+            let base = "systemd-resolved's default DNS route uses the expected tunnel resolvers";
             Feature::Verified(if local.is_empty() {
                 base.into()
             } else {
@@ -209,10 +227,7 @@ pub fn judge_ipv6(
         RouteProbe::Unreachable => Feature::Verified(
             "IPv6 is blocked while connected: there is no IPv6 route outside the tunnel".into(),
         ),
-        RouteProbe::Outside if into_tunnel => Feature::Verified(DROPPED_V6.into()),
-        RouteProbe::Outside if default.is_some_and(|d| d.reject) => Feature::Verified(
-            "IPv6 is blocked while connected: there is no IPv6 route outside the tunnel".into(),
-        ),
+        RouteProbe::Outside if route == RouteKind::FullIpv4Only && into_tunnel => Feature::Verified(DROPPED_V6.into()),
         RouteProbe::Outside => Feature::Failed(
             "IPv6 traffic leaves outside the tunnel. Reconnect so Aegis can block it, or add IPv6 to the profile."
                 .into(),
@@ -321,14 +336,21 @@ pub fn judge_public_ip(addrs: Option<Vec<Ipv4Addr>>) -> Feature {
     }
 }
 
-fn dns_exchange(server: IpAddr, name: &str) -> Option<(u16, Vec<u8>)> {
-    let bind = if server.is_ipv6() {
-        "[::]:0"
-    } else {
-        "0.0.0.0:0"
-    };
-    let sock = UdpSocket::bind(bind).ok()?;
-    sock.connect(SocketAddr::new(server, 53)).ok()?;
+fn dns_socket(server: IpAddr, iface: &str, source: IpAddr) -> std::io::Result<UdpSocket> {
+    let addr = SocketAddr::new(server, 53);
+    let sock = socket2::Socket::new(
+        socket2::Domain::for_address(addr),
+        socket2::Type::DGRAM,
+        None,
+    )?;
+    sock.bind_device(Some(iface.as_bytes()))?;
+    sock.bind(&SocketAddr::new(source, 0).into())?;
+    sock.connect(&addr.into())?;
+    Ok(sock.into())
+}
+
+fn dns_exchange(server: IpAddr, name: &str, iface: &str, source: IpAddr) -> Option<(u16, Vec<u8>)> {
+    let sock = dns_socket(server, iface, source).ok()?;
     sock.set_read_timeout(Some(std::time::Duration::from_secs(3)))
         .ok()?;
     let id = std::time::SystemTime::now()
@@ -348,14 +370,14 @@ fn dns_exchange(server: IpAddr, name: &str) -> Option<(u16, Vec<u8>)> {
 }
 
 /// Send one query to `server` and wait up to 3 s for its reply. Blocking.
-pub fn lookup(server: IpAddr) -> Option<u8> {
-    let (id, reply) = dns_exchange(server, REACH_NAME)?;
+pub fn lookup(server: IpAddr, iface: &str, source: IpAddr) -> Option<u8> {
+    let (id, reply) = dns_exchange(server, REACH_NAME, iface, source)?;
     dns_rcode(id, &reply)
 }
 
 /// Ask `server` for [`WHOAMI_NAME`] and return the A records. Blocking.
-pub fn lookup_public_ip(server: IpAddr) -> Option<Vec<Ipv4Addr>> {
-    let (id, reply) = dns_exchange(server, WHOAMI_NAME)?;
+pub fn lookup_public_ip(server: IpAddr, iface: &str, source: IpAddr) -> Option<Vec<Ipv4Addr>> {
+    let (id, reply) = dns_exchange(server, WHOAMI_NAME, iface, source)?;
     dns_a_records(id, &reply)
 }
 
@@ -365,6 +387,11 @@ mod tests {
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
+    }
+
+    #[test]
+    fn dns_socket_does_not_fall_back_when_interface_is_missing() {
+        assert!(dns_socket(ip("127.0.0.1"), "aegis-ffffffff", ip("127.0.0.1")).is_err());
     }
 
     #[test]
@@ -384,7 +411,11 @@ mod tests {
     fn dns_needs_tunnel_route_and_exclusive_resolver() {
         let via_tunnel = [(ip("10.0.0.1"), RouteProbe::Tunnel)];
         let tun = Some(7);
-        let only_tunnel = Resolver::Resolved(vec![(7, ".".into(), true), (2, "lan".into(), false)]);
+        let resolved = |domains| Resolver::Resolved {
+            domains,
+            dns: vec![(7, 2, vec![10, 0, 0, 1])],
+        };
+        let only_tunnel = resolved(vec![(7, ".".into(), true), (2, "lan".into(), false)]);
         let f = judge_dns(&via_tunnel, &only_tunnel, tun);
         assert!(
             matches!(&f, Feature::Verified(d) if d.contains("lan")),
@@ -399,18 +430,26 @@ mod tests {
             ),
             Feature::Failed(_)
         ));
-        let shared = Resolver::Resolved(vec![(7, ".".into(), true), (2, ".".into(), true)]);
+        let unexpected = Resolver::Resolved {
+            domains: vec![(7, ".".into(), true)],
+            dns: vec![(7, 2, vec![192, 0, 2, 1])],
+        };
+        assert!(matches!(
+            judge_dns(&via_tunnel, &unexpected, tun),
+            Feature::Failed(_)
+        ));
+        let shared = resolved(vec![(7, ".".into(), true), (2, ".".into(), true)]);
         assert!(matches!(
             judge_dns(&via_tunnel, &shared, tun),
             Feature::Failed(_)
         ));
-        let missing = Resolver::Resolved(vec![(2, ".".into(), true)]);
+        let missing = resolved(vec![(2, ".".into(), true)]);
         assert!(matches!(
             judge_dns(&via_tunnel, &missing, tun),
             Feature::Failed(_)
         ));
         // Domain "." without the routing-only flag is a search domain, not a catch-all.
-        let search_only = Resolver::Resolved(vec![(7, ".".into(), false)]);
+        let search_only = resolved(vec![(7, ".".into(), false)]);
         assert!(matches!(
             judge_dns(&via_tunnel, &search_only, tun),
             Feature::Failed(_)

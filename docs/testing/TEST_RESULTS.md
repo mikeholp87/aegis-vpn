@@ -2,6 +2,135 @@
 
 Only what was actually executed. Newest first.
 
+## 2026-11-18 — Main branch integration
+
+Integrated the audit changes with GitHub main at `2854b28`. The integrated
+checkout passed workspace formatting and Clippy, 136 Rust tests, the frontend
+production build and 30 frontend tests. The Windows adapter and service passed
+all-target MSVC-target compile checks.
+
+Built unsigned Linux debug DEB and RPM packages. Both archives include the
+helper and matching Polkit policy at their system paths. The packaged removal
+hooks matched their sources. Stub checks confirmed that failed firewall cleanup
+aborts removal, successful cleanup permits removal, and upgrade leaves the
+block in place. ShellCheck and shfmt passed for both hooks and the test scripts.
+Native package transactions, desktop prompts and a live Windows tunnel remain
+pending.
+
+## 2026-11-18 — Release readiness audit and remediation
+
+Host was Debian forky/sid, Linux 7.3.4+deb14-amd64, Rust 1.99.1, Node
+24.16.0 and pnpm 12.21.0. Baseline was main at `548523e` with the hardened
+helper and other existing working-tree edits. Baseline workspace formatting,
+locked offline check, Clippy and all-target tests passed (131 Rust tests).
+Frontend lint, types, 29 tests and production build passed.
+
+| Check | Observed result |
+|---|---|
+| `cargo fmt --all -- --check` | Passed |
+| `cargo check --workspace --all-targets --locked --offline` | Passed |
+| `cargo clippy --workspace --all-targets --locked --offline -- -D warnings` | Passed |
+| `cargo test --workspace --all-targets --locked --offline` | 136 passed in 14 test binaries, including empty example harnesses |
+| `cargo check -p aegis-windows --all-targets --target x86_64-pc-windows-msvc --locked --offline` | Passed, source and test compilation only |
+| `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build` | Passed under `apps/desktop`. 30 tests passed. Biome reported the pre-existing preset deprecation |
+| `pnpm audit --prod` | No known vulnerabilities found |
+| `cargo audit --db "$advisory_db" --no-fetch --no-yanked` | Passed using a fresh RustSec checkout at `233155b` (2026-11-17). Five unmaintained dependency warnings (`chrono`, `proc-macro-error`, `zbus_names`, `zvariant`, `zvariant_derive`). Yanked-version checks were excluded |
+| `cargo deny --offline check` | Advisories, bans, licenses and sources passed with a writable scratch copy of the configured database and policy path. The normal invocation initially failed to lock the read-only cache |
+| ShellCheck, `shfmt -d`, and `bash scripts/install-helper.test.sh` | Passed for the applicable installer and VM scripts. Package installation on the host was outside the test |
+| `./node_modules/.bin/tauri build --debug --ci --no-sign --bundles deb,rpm -- --locked --offline` | Both Linux desktop bundles built. SHA-256 verification, `dpkg-deb` and RPM CPIO listing passed |
+
+The new regressions include external firewall loss, Linux socket binding,
+live resolver address matching, activation-scoped handshake caching,
+preservation of untracked profiles, profile-edit rollback, local-only Tauri
+command grants and Rust-to-UI settings synchronization.
+
+Local artifact hashes:
+
+- DEB `171e5475c7efa92f8202d0d66d77a498fa59b387ac7a118bc6b3afb85725a0be`
+- RPM `747e17351366c08dc264843d38f1cef9bcc8958b6f556f66cfa8b0f0a5b0ade6`
+
+Both archives contain the desktop binary, launcher and icons. The separate
+helper and Polkit policy are needed for protected mode. Neither package was
+installed. The hosted preview workflow was not triggered.
+
+The attempted baseline and current desktop startup measurements under Xvfb
+timed out after eight seconds waiting for a visible window. Desktop portal
+and runtime socket errors were observed. Startup, idle and connected resource
+measurements remain unavailable. Gzip JS artifact size was 90.09 kB at
+baseline and 90.14 kB after remediation.
+
+## 2026-11-18 — Live validation of the hardened Linux helper
+
+The validation snapshot passed 131 Rust tests with
+`cargo test --workspace --all-targets --locked`. Focused all-target Clippy
+passed for the Linux backend and helper.
+ShellCheck, shfmt, the installer and policy test, and ShellCheck on the VM CI
+setup step passed.
+
+Without `/dev/kvm`, the runner booted a SHA512-verified Debian 13 snapshot using
+QEMU software emulation. The first attempt hit a read-only `/var/tmp` when QEMU
+created its disk overlay. Storing the overlay in the private run directory let
+the guest boot. SSH initially rejected a host configuration file with invalid
+ownership. The runner now gives SSH and SCP explicit per-run settings. A
+cleanup edit interrupted an active Bash runner during the next attempt, so the
+live suite ran from a fixed copy of the final script.
+
+Guest: Debian 13, kernel 6.12.117+deb13-cloud-amd64, NetworkManager 1.52.1.
+**221 passed, 0 failed** (110 `full`, 111 `full4`). The runner exited 0.
+Results apply to the binaries built at the start of the run.
+Both modes used the updated helper and policy at their system paths inside the
+VM. The helper reported no block before apply, rediscovered the retained block
+from the kernel during startup after a forced tunnel drop, and reported no block
+after Disconnect. Packet captures confirmed the uplink block and the positive
+control after removal. The route, rule, DNS and nftables snapshots matched the
+baseline after cleanup. The guest's test Polkit rule authorized helper actions.
+Desktop administrator prompts and Windows runtime remain untested.
+
+## 2026-11-17 — Linux helper security follow-up
+
+Scope: helper inputs/privileged filesystem access, mutation serialization,
+Polkit authorization, kernel inspection, core recovery, wrapper propagation
+and uninstall failure handling. IPv6 routing and the ruleset's allowed traffic
+were not changed. The user explicitly chose administrator authentication for
+machine-wide firewall changes; read-only actions remain separately scoped.
+
+- `cargo test --workspace --all-targets --locked`: **131 passed**, 13 suites.
+  Helper: **7 passed**, including symlink/hard-link rejection, runtime mode,
+  competing lock descriptors, failed readback retaining rules, legacy marker
+  links never written, table absence versus command errors, strict argv and
+  ruleset ownership. All nft calls in failure tests are stubs; no host firewall
+  commands ran.
+- Linux status-response parsing checks true/false, malformed replies, explicit
+  upgrade guidance for the older helper's usage error and preserved permission
+  errors. The helper binary and policy must be upgraded together.
+- New core regressions cover failed startup inspection retaining Uncertain,
+  failed cleanup remaining retryable, failed apply discovering a leftover
+  block, and marker cleanup failing after rules are already removed. The last
+  regression failed with a false Verified claim before its fix and passed after.
+- Frontend Vitest: **29 passed**; includes Disconnect remaining enabled with
+  uncertain state and a null profile. TypeScript and Biome passed (existing
+  Biome configuration deprecation notice remains).
+- `bash scripts/install-helper.test.sh`: pass. It parses the policy XML to
+  check admin-only apply/remove and argv1-scoped read-only permissions, then
+  uses temporary dummy helpers to prove failed cleanup prevents uninstall.
+- Shellcheck and shfmt passed for the installer, its test and VM runner.
+  Workspace formatting and all-target Clippy with warnings denied passed.
+- Windows target Clippy for the Windows adapter and helper, and musl target
+  check for the helper passed. These are compile checks, not Windows/live tests.
+
+The unprivileged helper `status` invocation exited 2 with the expected root
+requirement, before any nft call. Intermediate Clippy checks caught a
+collapsible-if warning and test-module placement, fixed before the final
+check. Focused Jev Review ran during implementation; its scores are
+advisory and do not establish runtime safety.
+
+Attempted `bash scripts/vm/run-vm-tests.sh`: exited 1 before booting because
+`/dev/kvm` is absent (runner reports no write access). The updated binary and
+policy were not installed on the host; real Polkit prompts and post-hardening
+packet-capture tests remain unrun. Existing live VM results below describe
+earlier revisions. No Windows runtime, dependency audit or Gitleaks scan was run.
+Upgrade instructions: [README](../../README.md#linux-helper-install-or-upgrade).
+
 ## 2026-11-17 — deb now packages the kill-switch helper (build and contents only)
 
 Security review finding: the installed `.deb` shipped no helper or Polkit policy, so the
@@ -209,6 +338,7 @@ UI has not been looked at on Windows; nothing about the pipe client against a
 live service; no service, tunnel, DPAPI, SCM, tunnel.dll or WFP code exists or
 ran. Biome prints a deprecation notice for `linter.recommended` in
 `biome.json` (not an error; not changed).
+
 
 ## 2026-11-17 — Windows backend, step 1 (protocol, naming, pipe client)
 

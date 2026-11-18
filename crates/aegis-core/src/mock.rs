@@ -37,6 +37,9 @@ struct Inner {
     /// Simulated kill switch: (iface owner, endpoints, allow_lan) while blocking.
     blocking: Option<(ProfileId, Vec<std::net::SocketAddr>, bool)>,
     fail_next_kill_switch: bool,
+    fail_kill_switch_status: bool,
+    fail_remove_kill_switch: bool,
+    fail_after_remove_kill_switch: bool,
     /// Order of kill-switch and tunnel operations, for tests.
     ops: Vec<&'static str>,
 }
@@ -173,6 +176,15 @@ impl MockBackend {
     /// Test hook: make the next kill-switch apply fail.
     pub fn fail_next_kill_switch(&self) {
         self.lock().fail_next_kill_switch = true;
+    }
+    pub fn fail_kill_switch_status(&self, fail: bool) {
+        self.lock().fail_kill_switch_status = fail;
+    }
+    pub fn fail_remove_kill_switch(&self, fail: bool) {
+        self.lock().fail_remove_kill_switch = fail;
+    }
+    pub fn fail_after_remove_kill_switch(&self) {
+        self.lock().fail_after_remove_kill_switch = true;
     }
     /// Simulated block, if any: (profile, endpoints, allow_lan).
     pub fn blocking(&self) -> Option<(ProfileId, Vec<std::net::SocketAddr>, bool)> {
@@ -345,12 +357,22 @@ impl VpnBackend for MockBackend {
     async fn remove_kill_switch(&self) -> Result<()> {
         let mut g = self.lock();
         g.ops.push("remove");
+        if g.fail_remove_kill_switch {
+            return Err(CoreError::backend("simulated firewall removal failure"));
+        }
         g.blocking = None;
+        if std::mem::take(&mut g.fail_after_remove_kill_switch) {
+            return Err(CoreError::backend("simulated marker cleanup failure"));
+        }
         Ok(())
     }
 
-    async fn kill_switch_active(&self) -> bool {
-        self.lock().blocking.is_some()
+    async fn kill_switch_active(&self) -> Result<bool> {
+        let g = self.lock();
+        if g.fail_kill_switch_status {
+            return Err(CoreError::backend("simulated firewall inspection failure"));
+        }
+        Ok(g.blocking.is_some())
     }
 
     async fn check_public_ip(&self, _profile: &ProfileSummary, _status: &TunnelStatus) -> Feature {

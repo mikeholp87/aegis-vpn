@@ -55,6 +55,8 @@ export function Dashboard({ goTo }: { goTo: (s: ScreenId) => void }) {
   }
 
   const stats = snapshot?.stats;
+  const hasHandshakeTime = caps?.exact_handshake_time.status === "supported";
+  const peerTime = hasHandshakeTime ? stats?.last_handshake_ms : stats?.last_response_ms;
   const connected = state.state === "connected";
   const s = selected?.summary;
   const peerConfirmed = connected && state.peer === "confirmed";
@@ -101,7 +103,7 @@ export function Dashboard({ goTo }: { goTo: (s: ScreenId) => void }) {
             </p>
             {!active && snapshot?.protection.kill_switch.status === "verified" && (
               <p role="status" className="mt-1 max-w-[62ch] text-[14px] font-semibold text-pending">
-                The kill switch is blocking all traffic outside the tunnel.
+                The kill switch is blocking ordinary traffic outside the tunnel.
               </p>
             )}
           </div>
@@ -205,15 +207,13 @@ export function Dashboard({ goTo }: { goTo: (s: ScreenId) => void }) {
             </Row>
             <Row label="Routing">{s ? routeLabel[s.route_kind] : ""}</Row>
             <Row
-              label={
-                caps?.exact_handshake_time.status === "supported" ? "Last handshake" : "Last server response"
-              }
-              state={stats?.last_handshake_ms ? "confirmed" : connected ? "pending" : "unavailable"}
+              label={hasHandshakeTime ? "Last handshake" : "Last server response"}
+              state={peerTime ? "confirmed" : connected ? "pending" : "unavailable"}
             >
-              {stats?.last_handshake_ms
-                ? ago(stats.last_handshake_ms, now)
+              {peerTime
+                ? ago(peerTime, now)
                 : connected
-                  ? caps?.exact_handshake_time.status === "supported"
+                  ? hasHandshakeTime
                     ? "None yet"
                     : state.peer === "no_response"
                       ? "No response yet"

@@ -4,6 +4,9 @@
 set -e
 case "$1" in
 remove | purge)
-	/usr/libexec/aegis-vpn/aegis-helper remove >/dev/null 2>&1 || true
+	/usr/libexec/aegis-vpn/aegis-helper remove || {
+		echo "Aegis firewall cleanup failed. Retry removal after resolving the helper error." >&2
+		exit 1
+	}
 	;;
 esac

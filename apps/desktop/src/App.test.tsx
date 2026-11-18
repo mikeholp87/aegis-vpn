@@ -217,7 +217,8 @@ describe("App", () => {
           tx_bytes: 500,
           rx_rate_bps: 0,
           tx_rate_bps: 0,
-          last_handshake_ms: since,
+          last_handshake_ms: null,
+          last_response_ms: since,
           interface: "aegis0",
           sampled_ms: Date.now(),
         },
@@ -229,9 +230,12 @@ describe("App", () => {
     expect(screen.getByText("203.0.113.50")).toBeInTheDocument();
   });
 
-  it("keeps disconnect available when tunnel status is unknown", async () => {
+  it.each(["p1", null])("keeps disconnect available with unknown status and profile %s", async (id) => {
     setup({
-      snapshot: snap({ state: "uncertain", profile: "p1", reason: "Cannot read tunnel status" }, profile),
+      snapshot: snap(
+        { state: "uncertain", profile: id, reason: "Cannot read tunnel status" },
+        id ? profile : null,
+      ),
     });
     expect(await screen.findByRole("heading", { name: "Tunnel status unknown" })).toBeInTheDocument();
     expect(screen.getByText("Cannot read tunnel status")).toBeInTheDocument();
@@ -247,7 +251,7 @@ describe("App", () => {
         protection: { ...failed.protection, kill_switch: { status: "verified", detail: "blocking" } },
       },
     });
-    expect(await screen.findByText(/kill switch is blocking all traffic/i)).toBeInTheDocument();
+    expect(await screen.findByText(/kill switch is blocking ordinary traffic/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Stop blocking" }));
     expect(mockApi.disconnect).toHaveBeenCalled();
   });
@@ -486,4 +490,16 @@ describe("Locations cancellation and retained protection", () => {
     await userEvent.click(screen.getByRole("button", { name: "Stop blocking" }));
     expect(mockApi.disconnect).toHaveBeenCalled();
   });
+});
+
+it("updates Settings when the Rust engine changes them", async () => {
+  setup();
+  await screen.findByRole("heading", { level: 1 });
+  await act(async () =>
+    engineEvents.listener?.({
+      type: "settings_changed",
+      data: { ...settings, theme: "dark" },
+    }),
+  );
+  expect(document.documentElement).toHaveAttribute("data-theme", "dark");
 });

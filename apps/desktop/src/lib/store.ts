@@ -95,6 +95,7 @@ export function useAppStore(): AppStore {
     (async () => {
       let sawSnapshot = false;
       let sawProfiles = false;
+      let sawSettings = false;
       const listeners = await Promise.all([
         listen<string>("settings-error", (e) => notify({ tone: "error", text: e.payload })),
         onEngineEvent((e) => {
@@ -103,7 +104,10 @@ export function useAppStore(): AppStore {
             sawSnapshot = true;
             setSnapshot(e.data);
           } else if (e.type === "log") setEvents((xs) => [...xs.slice(-(MAX_EVENTS - 1)), e.data]);
-          else if (e.type === "profiles_changed") {
+          else if (e.type === "settings_changed") {
+            sawSettings = true;
+            setSettings(e.data);
+          } else if (e.type === "profiles_changed") {
             sawProfiles = true;
             void api
               .profiles()
@@ -139,7 +143,7 @@ export function useAppStore(): AppStore {
       setCaps(c);
       if (!sawSnapshot) setSnapshot(s);
       if (!sawProfiles) setProfiles(p);
-      setSettings(st);
+      if (!sawSettings) setSettings(st);
       setEvents((xs) => [...ev, ...xs].slice(-MAX_EVENTS));
     })().catch((e) => notify({ tone: "error", text: asUiError(e).message }));
     return () => {

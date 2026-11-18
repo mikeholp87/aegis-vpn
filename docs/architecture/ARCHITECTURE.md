@@ -17,12 +17,12 @@
 │  · ConnectionState machine, op lock, cancel, timeouts      │
 │  · monitor (2 s poll) → PeerState, rates, drop detection   │
 │  · bounded reconnect (1 s → 60 s, N attempts)              │
-│  · crash recovery: adopt live tunnel, remove orphans       │
+│  · crash recovery: preserve untracked backend profiles       │
 │  · Store: profiles.json + settings.json (no secrets, 0600) │
 │  · diagnostics + sanitized bundle                          │
 ├──────────────┬──────────────────┬──────────────────────────┤
 │ MockBackend  │ NmBackend (Linux)│ ServiceBackend (Windows) │
-│ opt-in only  │ D-Bus → NM       │ STUB: reports unavailable│
+│ opt-in only  │ D-Bus → NM       │ client: offline until auth│
 └──────────────┴────────┬─────────┴──────────────────────────┘
                         │ system D-Bus + Polkit
                ┌────────▼────────┐
@@ -66,7 +66,7 @@ On next start, `recover()` adopts it.
 
 ## Not built yet
 
-Non-NM fallback, exact handshake time, Windows service, updater and packaging
+Non-NM fallback, Windows service, updater and native packaging
 verification. Linux kill-switch work now uses the separately installed
 `aegis-helper` through Polkit/pkexec (see decision D14); protected switching
 remains refused. See `docs/ROADMAP.md`.
@@ -108,3 +108,19 @@ cool down Quick Connect candidates. Recent response evidence expires after
 five minutes; RTT remains absent because no supported sampler is implemented.
 See [Locations](../features/LOCATIONS.md) for operational limits and pending
 Windows/protected-switch acceptance.
+
+## Audit changes
+
+The Linux engine rechecks the helper's firewall status while a protected
+tunnel is activating and in its status loop. Missing or unreadable protection
+stops the protected tunnel and clears the automated resume target. This
+detects a lost rule set. It cannot enforce a block removed by another
+administrator between checks. Linux DNS probes bind their sockets to the
+owned tunnel device and its source address. Resolver verification also checks
+the actual DNS servers attached to the systemd-resolved link.
+
+Simulated desktop sessions use temporary metadata and in-memory configurations.
+Startup preserves NetworkManager profiles with missing local metadata. If an
+edit's metadata write fails, the engine attempts to restore its previous
+backend configuration. The Windows protocol compiles, but production opens
+no pipe until a service can authenticate the server on every connection.

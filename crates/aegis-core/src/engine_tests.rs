@@ -402,7 +402,7 @@ async fn duplicate_rename_and_unique_names() {
 }
 
 #[tokio::test]
-async fn recovery_removes_orphans_and_adopts_active_tunnel() {
+async fn recovery_preserves_untracked_credentials_and_adopts_known_tunnel() {
     let dir = tempfile::tempdir().unwrap();
     let e = Engine::start(MockBackend::instant(), dir.path())
         .await
@@ -419,7 +419,8 @@ async fn recovery_removes_orphans_and_adopts_active_tunnel() {
     mock.activate(id).await.unwrap();
     let e = Engine::start(mock, dir.path()).await.unwrap();
     assert!(is_connected(&e.snapshot().state));
-    assert_eq!(e.backend().installed().await.unwrap(), vec![id]);
+    let installed = e.backend().installed().await.unwrap();
+    assert!(installed.contains(&id) && installed.contains(&orphan));
 }
 
 #[tokio::test]
@@ -947,6 +948,59 @@ async fn kill_switch_left_by_a_previous_run_is_reported_and_removable() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn firewall_inspection_failure_stays_unknown_and_cleanup_is_retryable() {
+    let dir = tempfile::tempdir().unwrap();
+    let backend = MockBackend::with_test_kill_switch();
+    backend.leave_block(ProfileId::new());
+    backend.fail_kill_switch_status(true);
+    backend.fail_remove_kill_switch(true);
+    let e = Engine::start(backend, dir.path()).await.unwrap();
+    assert!(matches!(
+        e.snapshot().state,
+        ConnectionState::Uncertain { profile: None, .. }
+    ));
+    assert!(matches!(
+        e.snapshot().protection.kill_switch,
+        Feature::Failed(_)
+    ));
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(!e.snapshot().state.is_idle());
+    assert!(e.disconnect().await.is_err());
+    assert!(!e.snapshot().state.is_idle());
+    assert!(e.backend().blocking().is_some());
+    e.backend().fail_remove_kill_switch(false);
+    e.disconnect().await.unwrap();
+    assert_eq!(e.snapshot().state, ConnectionState::Disconnected);
+    assert!(e.backend().blocking().is_none());
+}
+
+#[tokio::test]
+async fn failed_apply_adopts_a_remaining_block_for_explicit_cleanup() {
+    let (e, _dir, id) = ks_engine(false).await;
+    e.backend().leave_block(id);
+    e.backend().fail_next_kill_switch();
+    assert!(e.connect(id).await.is_err());
+    assert!(matches!(
+        e.snapshot().protection.kill_switch,
+        Feature::Verified(_)
+    ));
+    assert!(e.backend().status().await.unwrap().is_none());
+    e.disconnect().await.unwrap();
+    assert!(e.backend().blocking().is_none());
+}
+
+#[tokio::test]
+async fn cleanup_error_after_removing_rules_does_not_claim_a_block() {
+    let (e, _dir, id) = ks_engine(false).await;
+    e.connect(id).await.unwrap();
+    e.backend().fail_after_remove_kill_switch();
+    assert!(e.disconnect().await.is_err());
+    assert!(e.backend().blocking().is_none());
+    assert_eq!(e.snapshot().protection.kill_switch, Feature::Off);
+    assert_eq!(e.snapshot().state, ConnectionState::Disconnected);
+}
+
+#[tokio::test(start_paused = true)]
 async fn recovery_with_supported_but_missing_kill_switch_blocks_reactivation() {
     let (e, dir, id) = ks_engine(false).await;
     let mut settings = e.settings();
@@ -1294,4 +1348,40 @@ async fn a_server_that_stops_answering_is_reported_and_recovers() {
         )
     })
     .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn externally_removed_firewall_revokes_verified_and_stops_protected_tunnel() {
+    let (e, _dir, id) = ks_engine(false).await;
+    e.connect(id).await.unwrap();
+    assert!(matches!(
+        e.snapshot().protection.kill_switch,
+        Feature::Verified(_)
+    ));
+    e.backend().remove_kill_switch().await.unwrap();
+    wait_for(&e, "firewall loss", |state| {
+        matches!(state, ConnectionState::Failed { .. })
+    })
+    .await;
+    assert!(e.backend().status().await.unwrap().is_none());
+    assert!(matches!(
+        e.snapshot().protection.kill_switch,
+        Feature::Failed(_)
+    ));
+}
+
+#[tokio::test]
+async fn profile_edit_restores_backend_if_metadata_write_fails() {
+    let (e, dir) = engine().await;
+    let id = e.import_text("Original", CONF).await.unwrap().meta.id;
+    let original = e.backend().load(id).await.unwrap();
+    let mut draft = e.draft(id).await.unwrap();
+    draft.private_key = crate::draft::KeyAction::Generate;
+    draft.name = "Changed".into();
+    let path = dir.path().join("profiles.json");
+    std::fs::rename(&path, dir.path().join("profiles.backup")).unwrap();
+    std::fs::create_dir(path).unwrap();
+    assert!(e.update(id, &draft).await.is_err());
+    assert_eq!(e.backend().load(id).await.unwrap(), original);
+    assert_eq!(e.profiles()[0].meta.name, "Original");
 }

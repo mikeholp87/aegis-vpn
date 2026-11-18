@@ -45,9 +45,8 @@ struct Live {
     reachability: Option<(u64, Feature)>,
     /// Last public-IP observation: (at_ms, result). Cleared on disconnect.
     public_ip: Option<(u64, Feature)>,
-    /// Kill-switch rules are installed (confirmed by the backend). Stays true
-    /// across drops, reconnects and failures until the user disconnects.
-    blocking: bool,
+    /// Kernel block state, or None when inspection failed and cleanup is required.
+    blocking: Option<bool>,
     /// The profile the user is meant to be connected to: set once a tunnel
     /// came up, cleared by Disconnect/Cancel. Lets a resume from sleep retry a
     /// dropped session without reconnecting something the user never had up.
@@ -94,7 +93,7 @@ impl<B: VpnBackend> Engine<B> {
                 verified: None,
                 reachability: None,
                 public_ip: None,
-                blocking: false,
+                blocking: Some(false),
                 session: None,
                 path_epoch: 0,
                 path_changed_ms: 0,
@@ -223,9 +222,14 @@ impl<B: VpnBackend> Engine<B> {
 
     /// The kill switch is the engine's to report: only installed rules count.
     fn kill_switch_feature(&self, l: &Live, from_backend: Feature) -> Feature {
-        if l.blocking {
+        if l.blocking.is_none() {
+            return Feature::Failed(
+                "firewall state is unknown; retry Disconnect to remove any block".into(),
+            );
+        }
+        if l.blocking == Some(true) {
             return Feature::Verified(
-                "blocking all traffic outside the tunnel; the firewall rules were read back after installing"
+                "the firewall block was confirmed; endpoint and network-control exceptions apply"
                     .into(),
             );
         }
@@ -235,11 +239,15 @@ impl<B: VpnBackend> Engine<B> {
         match (&self.caps.kill_switch, &l.state) {
             (Support::Unsupported(m), _) => Feature::Unsupported(m.clone()),
             (_, ConnectionState::Uncertain { reason, .. }) => Feature::Failed(reason.clone()),
-            (_, ConnectionState::Connected { .. } | ConnectionState::Reconnecting { .. }) => {
-                Feature::Failed(
-                    "on in Settings but not blocking for this session; disconnect and connect again".into(),
-                )
-            }
+            (
+                _,
+                ConnectionState::Connected { .. }
+                | ConnectionState::Reconnecting { .. }
+                | ConnectionState::Failed { .. },
+            ) => Feature::Failed(
+                "on in Settings but not blocking for this session; disconnect and connect again"
+                    .into(),
+            ),
             _ => Feature::Off,
         }
     }
@@ -402,7 +410,7 @@ impl<B: VpnBackend> Engine<B> {
             self.unique_name(&name)
         };
         self.backend.install(id, &name, &cfg).await?;
-        meta.name = name;
+        let previous_name = std::mem::replace(&mut meta.name, name);
         meta.summary = ProfileSummary::from_config(&cfg);
         meta.updated_ms = now_ms();
         meta.server.last_response_ms = None;
@@ -416,11 +424,18 @@ impl<B: VpnBackend> Engine<B> {
             meta.server.registration_pending = true;
         }
         let m = meta.clone();
-        self.save_profiles(|v| {
+        if let Err(error) = self.save_profiles(|v| {
             if let Some(slot) = v.iter_mut().find(|p| p.id == id) {
                 *slot = m;
             }
-        })?;
+        }) {
+            if let Err(rollback) = self.backend.install(id, &previous_name, &existing).await {
+                return Err(CoreError::storage(format!(
+                    "profile metadata write failed and the old configuration could not be restored ({rollback}); check Diagnostics before connecting"
+                )));
+            }
+            return Err(error);
+        }
         self.log(Level::Info, format!("Profile \"{}\" updated", meta.name));
         Ok(ProfileView {
             meta,
@@ -461,15 +476,16 @@ impl<B: VpnBackend> Engine<B> {
                 "disconnect before deleting the active profile",
             ));
         }
-        // Metadata first: if uninstall then fails, recovery removes the orphan on next start.
+        // Keep the registry entry until the backend confirms deletion.
+        self.backend.uninstall(id).await?;
         self.save_profiles(|v| v.retain(|p| p.id != id))?;
         if self.live().settings.preferred_profile == Some(id) {
             let mut s = self.settings();
             s.preferred_profile = None;
             self.store.save_settings(&s)?;
-            self.live().settings = s;
+            self.live().settings = s.clone();
+            let _ = self.tx.send(EngineEvent::SettingsChanged(s));
         }
-        self.backend.uninstall(id).await?;
         self.log(Level::Info, format!("Profile \"{}\" deleted", meta.name));
         Ok(())
     }
@@ -594,7 +610,7 @@ impl<B: VpnBackend> Engine<B> {
             let l = self.live();
             let changed = s.kill_switch != l.settings.kill_switch
                 || s.kill_switch_allow_lan != l.settings.kill_switch_allow_lan;
-            if changed && (!l.state.is_idle() || l.blocking) {
+            if changed && (!l.state.is_idle() || l.blocking != Some(false)) {
                 return Err(CoreError::invalid(
                     "disconnect before changing the kill switch; it applies from the next connection",
                 ));
@@ -633,6 +649,7 @@ impl<B: VpnBackend> Engine<B> {
         if preferred_changed {
             let _ = self.tx.send(EngineEvent::ProfilesChanged);
         }
+        let _ = self.tx.send(EngineEvent::SettingsChanged(s.clone()));
         self.publish();
         Ok(s)
     }
@@ -659,7 +676,12 @@ impl<B: VpnBackend> Engine<B> {
     fn check_session_protection(&self) -> Result<()> {
         self.check_requested_protection()?;
         let l = self.live();
-        if l.settings.kill_switch && !l.blocking {
+        if l.blocking.is_none() {
+            return Err(CoreError::invalid(
+                "firewall state could not be confirmed; retry Disconnect",
+            ));
+        }
+        if l.settings.kill_switch && l.blocking != Some(true) {
             return Err(CoreError::invalid(
                 "the requested kill switch is not blocking traffic; disconnect and connect again to install it",
             ));
@@ -759,19 +781,29 @@ impl<B: VpnBackend> Engine<B> {
                     .apply_kill_switch(id, endpoints, settings.kill_switch_allow_lan)
                     .await
                 {
+                    let blocking = self.backend.kill_switch_active().await.ok();
+                    self.live().blocking = blocking;
                     self.log(
                         Level::Error,
                         format!("Kill switch could not be turned on: {e}"),
                     );
-                    self.set_state(ConnectionState::Failed {
-                        profile: Some(id),
-                        reason: format!(
-                            "the kill switch could not be turned on, so Aegis did not connect: {e}"
-                        ),
+                    let reason = format!(
+                        "the kill switch could not be turned on, so Aegis did not connect: {e}"
+                    );
+                    self.set_state(if blocking.is_none() {
+                        ConnectionState::Uncertain {
+                            profile: Some(id),
+                            reason,
+                        }
+                    } else {
+                        ConnectionState::Failed {
+                            profile: Some(id),
+                            reason,
+                        }
                     });
                     return Err(e);
                 }
-                self.live().blocking = true;
+                self.live().blocking = Some(true);
                 self.log(
                     Level::Info,
                     "Kill switch on: traffic outside the tunnel is blocked",
@@ -825,7 +857,9 @@ impl<B: VpnBackend> Engine<B> {
         tokio::select! {
             _ = cancel.cancelled() => Err(CoreError::Cancelled),
             r = tokio::time::timeout(CONNECT_TIMEOUT, async {
+                self.refresh_firewall().await?;
                 self.backend.activate(id).await?;
+                self.refresh_firewall().await?;
                 match self.backend.status().await? {
                     Some(s) if s.id == id && s.link == LinkState::Up => Ok(()),
                     _ => Err(CoreError::backend("backend did not confirm the selected tunnel is up")),
@@ -835,6 +869,26 @@ impl<B: VpnBackend> Engine<B> {
                 Err(_) => Err(CoreError::Timeout { what: "the tunnel did not come up".into(), seconds: CONNECT_TIMEOUT.as_secs() }),
             },
         }
+    }
+
+    async fn refresh_firewall(&self) -> Result<()> {
+        let expected = {
+            let l = self.live();
+            self.caps.kill_switch.is_supported()
+                && (l.settings.kill_switch || l.blocking != Some(false))
+        };
+        if expected {
+            let active = tokio::time::timeout(POLL, self.backend.kill_switch_active())
+                .await
+                .map_err(|_| CoreError::Timeout {
+                    what: "checking firewall state".into(),
+                    seconds: POLL.as_secs(),
+                })
+                .and_then(|result| result);
+            self.live().blocking = active.as_ref().ok().copied();
+            active?;
+        }
+        self.check_session_protection()
     }
 
     fn on_connected(self: &Arc<Self>, id: ProfileId) {
@@ -856,7 +910,12 @@ impl<B: VpnBackend> Engine<B> {
                 );
             }
             Err(e) => {
-                self.set_state(ConnectionState::Uncertain { profile: Some(id), reason: format!("existing tunnel does not meet requested protection: {e}; disconnect or change Settings") });
+                self.set_state(ConnectionState::Uncertain {
+                    profile: Some(id),
+                    reason: format!(
+                        "existing tunnel protection is not confirmed: {e}; retry Disconnect"
+                    ),
+                });
                 self.log(
                     Level::Warn,
                     "Existing tunnel kept active, but requested protection is not active",
@@ -908,12 +967,12 @@ impl<B: VpnBackend> Engine<B> {
 
     /// Remove the kill-switch block if one is installed.
     async fn end_block(&self) -> Result<()> {
-        if !self.live().blocking {
+        if self.live().blocking == Some(false) {
             return Ok(());
         }
         match self.backend.remove_kill_switch().await {
             Ok(()) => {
-                self.live().blocking = false;
+                self.live().blocking = Some(false);
                 self.log(
                     Level::Info,
                     "Kill switch off: traffic outside the tunnel is allowed again",
@@ -922,9 +981,18 @@ impl<B: VpnBackend> Engine<B> {
                 Ok(())
             }
             Err(e) => {
+                let blocking = self.backend.kill_switch_active().await.ok();
+                self.live().blocking = blocking;
+                if blocking.is_none() {
+                    let profile = self.live().state.profile();
+                    self.set_state(ConnectionState::Uncertain {
+                        profile,
+                        reason: "firewall cleanup was not confirmed; retry Disconnect".into(),
+                    });
+                }
                 self.log(
                     Level::Error,
-                    format!("Could not turn off the kill switch: {e}. Traffic stays blocked; try Disconnect again."),
+                    format!("Kill-switch cleanup reported an error: {e}. Check its current status and retry Disconnect if needed."),
                 );
                 self.publish();
                 Err(e)
@@ -991,12 +1059,32 @@ impl<B: VpnBackend> Engine<B> {
             if stop.is_cancelled() {
                 return;
             }
+            if let Some(id) = id
+                && self.caps.kill_switch.is_supported()
+                && let Err(e) = self.refresh_firewall().await
+            {
+                self.live().session = None;
+                self.log(
+                    Level::Error,
+                    format!(
+                        "Stopping tunnel because firewall protection could not be confirmed: {e}"
+                    ),
+                );
+                if self.teardown(id).await.is_ok() {
+                    self.set_state(ConnectionState::Failed {
+                        profile: Some(id),
+                        reason: "Firewall protection could not be confirmed. Check the helper and connect again, or retry Disconnect to clear a remaining block.".into(),
+                    });
+                }
+                return;
+            }
             let Some(id) = id else {
                 match status {
                     Ok(Some(s)) if self.meta(s.id).is_ok() && s.link == LinkState::Up => {
                         self.on_connected(s.id);
                         return;
                     }
+                    Ok(None) if self.live().blocking.is_none() => {}
                     Ok(None) => {
                         self.set_state(ConnectionState::Disconnected);
                         return;
@@ -1067,9 +1155,8 @@ impl<B: VpnBackend> Engine<B> {
                     } else {
                         PeerState::Pending
                     };
-                    // Prefer the backend's WireGuard handshake time; otherwise
-                    // surface the last observed peer response (rx growth).
-                    let last_handshake_ms = s.last_handshake_ms.or_else(|| {
+                    // A received-data observation has no exact handshake timestamp.
+                    let last_response_ms = s.last_handshake_ms.or_else(|| {
                         if confirmed {
                             Some(
                                 self.live()
@@ -1092,7 +1179,8 @@ impl<B: VpnBackend> Engine<B> {
                             tx_bytes: s.tx_bytes,
                             rx_rate_bps: rx_rate,
                             tx_rate_bps: tx_rate,
-                            last_handshake_ms,
+                            last_handshake_ms: s.last_handshake_ms,
+                            last_response_ms,
                             interface: s.interface.clone(),
                             sampled_ms: now,
                         });
@@ -1459,16 +1547,21 @@ impl<B: VpnBackend> Engine<B> {
     }
 
     /// Reconcile with the backend after start-up: adopt a tunnel that is
-    /// still up (the UI may have restarted while the tunnel persisted) and
-    /// remove backend profiles we no longer track.
+    /// still up (the UI may have restarted while the tunnel persisted).
     async fn recover(self: &Arc<Self>) {
         if !self.caps.available.is_supported() {
             return;
         }
         let known: Vec<ProfileId> = self.live().profiles.iter().map(|p| p.id).collect();
-        let blocking = self.backend.kill_switch_active().await;
-        if blocking {
-            self.live().blocking = true;
+        let blocking = match self.backend.kill_switch_active().await {
+            Ok(active) => Some(active),
+            Err(e) => {
+                self.log(Level::Warn, format!("Could not inspect the firewall: {e}"));
+                None
+            }
+        };
+        self.live().blocking = blocking;
+        if blocking == Some(true) {
             self.log(
                 Level::Warn,
                 "The kill switch from the previous session is still blocking traffic outside the tunnel",
@@ -1476,9 +1569,8 @@ impl<B: VpnBackend> Engine<B> {
         }
         match self.backend.installed().await {
             Ok(installed) => {
-                for orphan in installed.iter().copied().filter(|id| !known.contains(id)) {
-                    self.log(Level::Warn, format!("Removing leftover tunnel profile {orphan} from an interrupted operation"));
-                    let _ = self.backend.uninstall(orphan).await;
+                if installed.iter().any(|id| !known.contains(id)) {
+                    self.log(Level::Warn, "The backend has profiles missing from this registry. They were left intact; restore the registry or manage them in the system VPN settings.");
                 }
                 let missing = known
                     .iter()
@@ -1512,12 +1604,19 @@ impl<B: VpnBackend> Engine<B> {
                 );
                 self.on_connected(s.id);
             }
-            Ok(None) if blocking => self.set_state(ConnectionState::Failed {
+            Ok(None) if blocking == Some(true) => self.set_state(ConnectionState::Failed {
                 profile: None,
                 reason: "the kill switch from the previous session is still blocking traffic; connect again, \
                          or choose Stop blocking"
                     .into(),
             }),
+            Ok(None) if blocking.is_none() => {
+                self.set_state(ConnectionState::Uncertain {
+                    profile: None,
+                    reason: "cannot inspect the firewall; retry Disconnect to remove any block".into(),
+                });
+                self.start_monitor(None);
+            }
             Ok(None) => {}
             result => {
                 let (profile, reason) = match result {

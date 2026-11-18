@@ -31,7 +31,10 @@ write_files:
       // active local desktop user gets by default.
       polkit.addRule(function (action, subject) {
         if ((action.id.indexOf("org.freedesktop.NetworkManager.") === 0 ||
-             action.id === "org.aegisvpn.helper.killswitch") &&
+             action.id === "org.aegisvpn.helper.killswitch.apply" ||
+             action.id === "org.aegisvpn.helper.killswitch.remove" ||
+             action.id === "org.aegisvpn.helper.status" ||
+             action.id === "org.aegisvpn.helper.handshake") &&
             subject.user === "aegis") {
           return polkit.Result.YES;
         }

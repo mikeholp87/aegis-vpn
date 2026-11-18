@@ -126,15 +126,22 @@ switch. A failed destination stays explicitly failed after cleanup rather than
 automatically activating another profile. Revisit Windows and protected switching
 only with a tested privileged service/helper and controlled live-platform tests.
 
-### D14. Kill switch: pkexec one-shot root helper, session-scoped (user, 2026-11-16)
-`services/linux-helper` (`aegis-helper`, std-only, no dependencies) is the
-only code that runs as root. The app starts it through pkexec; the Polkit
-action `org.aegisvpn.helper.killswitch` allows the active local user without
-a password (`auth_admin` otherwise). It manages one nftables table,
+### D14. Kill switch: pkexec one-shot root helper, session-scoped (2026-11-16; revised by user 2026-11-17)
+`services/linux-helper` (`aegis-helper`, with libc for no-follow opens and
+kernel file locking) is the only code that runs as root. The app starts it
+through pkexec. Firewall changes affect **all local users**, so the user chose
+administrator authentication for both `org.aegisvpn.helper.killswitch.apply`
+and `.remove`. Read-only `.status` and `.handshake` actions remain password-free
+for the active desktop user; every action is scoped to its first argument.
+It manages one nftables table,
 `inet aegis_vpn` (output and input chains, policy drop, priority filter-10),
-in a single atomic transaction, reads it back before reporting success, and
-writes `/run/aegis-vpn/kill-switch` so the unprivileged app can see a block
-after a crash. Arguments are strictly validated (`aegis-<8 hex>` interface,
+in a single atomic transaction and reads it back before reporting success.
+Startup inspects the kernel table through `status`; marker files are no longer
+written or treated as proof. A persistent root-owned lock in `/run/aegis-vpn`
+serializes apply/remove; its directory and descriptor are checked before use.
+Inspection failures remain unknown and Disconnect can retry cleanup; readback
+failure preserves the block. Uninstall retains the helper if cleanup fails.
+Arguments are strictly validated (`aegis-<8 hex>` interface,
 1–16 `IP:port` endpoints); `nft` runs by absolute path with a clean env.
 Allowed while blocking: loopback, the tunnel interface, UDP to the endpoints,
 DHCPv4/v6, IPv6 neighbour discovery; with *Allow local network* also
@@ -148,7 +155,7 @@ in the UI). Settings cannot change mid-session.
 *Limits:* endpoints must be IP literals (a name cannot be resolved while
 blocked; such profiles are refused with a fix-it message). Forwarded traffic
 (containers, VMs) is not covered: no forward chain. Rules vanish on reboot
-with the marker, so the block does not persist across reboots. Protected
+so the block does not persist across reboots. Protected
 profile switching stays refused. *Alternatives:* systemd root service
 (rejected: permanent root process and socket). *Revisit:* forward chain,
 hostname endpoints, Windows (WFP).

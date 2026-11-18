@@ -12,6 +12,7 @@ aegis-core.workspace = true
 aegis-config.workspace = true
 futures-util.workspace = true
 ipnet.workspace = true
+socket2 = { version = "0.6", features = ["all"] }
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true

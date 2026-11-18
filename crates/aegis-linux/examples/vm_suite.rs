@@ -440,6 +440,12 @@ async fn main() {
         engine.capabilities().kill_switch.is_supported(),
         &format!("{:?}", engine.capabilities().kill_switch),
     );
+    let block = engine.backend().kill_switch_active().await;
+    step(
+        "helper reports no block before apply",
+        matches!(block, Ok(false)),
+        &format!("{block:?}"),
+    );
     let set_ks = |on: bool, lan: bool| {
         let mut s = engine.settings();
         s.kill_switch = on;
@@ -530,6 +536,21 @@ async fn main() {
         &format!("{:?}", engine.snapshot().state),
     );
     step("kill switch: still blocking after the drop", ks_table(), "");
+    let recovered = Engine::start(aegis_linux::NmBackend::connect().await.expect("NM"), &data)
+        .await
+        .expect("recovery engine");
+    let recovered_block = recovered.snapshot();
+    step(
+        "startup recovers installed block from kernel after tunnel drop",
+        matches!(
+            recovered_block.state,
+            ConnectionState::Failed { profile: None, .. }
+        ) && matches!(recovered_block.protection.kill_switch, Feature::Verified(_)),
+        &format!(
+            "{:?}, {:?}",
+            recovered_block.state, recovered_block.protection.kill_switch
+        ),
+    );
     let seen = wan_seen().await;
     step(
         "kill switch: nothing leaves after the drop",
@@ -540,11 +561,44 @@ async fn main() {
     let r = engine.disconnect().await;
     step("kill switch: disconnect", r.is_ok(), &format!("{r:?}"));
     step("kill switch: table removed on disconnect", !ks_table(), "");
+    let block = engine.backend().kill_switch_active().await;
+    step(
+        "helper reports no block after removal",
+        matches!(block, Ok(false)),
+        &format!("{block:?}"),
+    );
     let seen = wan_seen().await;
     step(
         "control: uplink traffic visible once unblocked",
         seen == Some(true),
         &format!("{seen:?}"),
+    );
+
+    let r = engine.connect(id).await;
+    step(
+        "connect before firewall-loss recovery test",
+        r.is_ok(),
+        &format!("{r:?}"),
+    );
+    let (ok, out) = root(&["/usr/libexec/aegis-vpn/aegis-helper", "remove"]);
+    step(
+        "administrator removes only the Aegis firewall block",
+        ok,
+        &out,
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline
+        && !matches!(engine.snapshot().state, ConnectionState::Failed { .. })
+    {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let snap = engine.snapshot();
+    step(
+        "firewall loss revokes Verified and stops the protected tunnel",
+        matches!(snap.state, ConnectionState::Failed { .. })
+            && matches!(snap.protection.kill_switch, Feature::Failed(_))
+            && matches!(engine.backend().status().await, Ok(None)),
+        &format!("{:?}, {:?}", snap.state, snap.protection.kill_switch),
     );
 
     let r = set_ks(true, true);

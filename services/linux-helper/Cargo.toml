@@ -7,8 +7,12 @@ license.workspace = true
 rust-version.workspace = true
 publish = false
 
-# No dependencies on purpose: this runs as root, so it stays small and
-# auditable. It only builds argv for /usr/sbin/nft from validated input.
+# libc supplies no-follow opens and the kernel lock on the runtime directory.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints]
 workspace = true

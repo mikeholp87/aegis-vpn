@@ -126,14 +126,21 @@ mod imp {
     }
 
     impl ServiceBackend {
-        /// Reaches the service and checks the protocol version. Errors say how to fix it.
+        /// Live IPC stays disabled until each pipe connection authenticates its server.
         pub async fn connect() -> Result<Self> {
-            expect_ok(Request::Hello {
-                version: proto::VERSION,
-            })
-            .await?;
-            Ok(Self(()))
+            Err(CoreError::unsupported(
+                "Windows tunneling is unavailable until the authenticated Aegis service is installed and verified",
+            ))
         }
+    }
+
+    #[cfg(test)]
+    #[tokio::test]
+    async fn unavailable_backend_never_opens_a_pipe() {
+        assert!(matches!(
+            ServiceBackend::connect().await,
+            Err(CoreError::Unsupported { .. })
+        ));
     }
 
     impl VpnBackend for ServiceBackend {
@@ -210,11 +217,13 @@ mod imp {
         async fn remove_kill_switch(&self) -> Result<()> {
             expect_ok(Request::RemoveKillSwitch).await
         }
-        async fn kill_switch_active(&self) -> bool {
-            matches!(
-                call(Request::KillSwitchActive).await,
-                Ok(Response::Active { active: true })
-            )
+        async fn kill_switch_active(&self) -> Result<bool> {
+            match call(Request::KillSwitchActive).await? {
+                Response::Active { active } => Ok(active),
+                _ => Err(CoreError::backend(
+                    "unexpected firewall-status reply from the Aegis service",
+                )),
+            }
         }
     }
 }

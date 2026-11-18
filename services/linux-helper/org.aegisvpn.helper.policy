@@ -2,19 +2,52 @@
 <!DOCTYPE policyconfig PUBLIC
  "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
-<!-- Installed to /usr/share/polkit-1/actions/. The active local desktop user
-     may change only the Aegis kill-switch table (same trust level as
-     NetworkManager's network-control); anyone else needs an administrator. -->
+<!-- Firewall changes affect every local user and require an administrator.
+     Read-only status and handshake queries are separate argv1-scoped actions. -->
 <policyconfig>
   <vendor>Aegis VPN</vendor>
-  <action id="org.aegisvpn.helper.killswitch">
-    <description>Change the Aegis VPN kill switch</description>
+  <action id="org.aegisvpn.helper.killswitch.apply">
+    <description>Enable the Aegis VPN kill switch</description>
     <message>Aegis VPN needs permission to block traffic outside the VPN tunnel</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/aegis-vpn/aegis-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">apply</annotate>
+  </action>
+  <action id="org.aegisvpn.helper.killswitch.remove">
+    <description>Disable the Aegis VPN kill switch</description>
+    <message>Aegis VPN needs permission to remove its firewall block</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/aegis-vpn/aegis-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">remove</annotate>
+  </action>
+  <action id="org.aegisvpn.helper.status">
+    <description>Read the Aegis VPN firewall state</description>
+    <message>Aegis VPN needs permission to inspect its firewall table</message>
     <defaults>
       <allow_any>auth_admin</allow_any>
       <allow_inactive>auth_admin</allow_inactive>
       <allow_active>yes</allow_active>
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/aegis-vpn/aegis-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">status</annotate>
+  </action>
+  <action id="org.aegisvpn.helper.handshake">
+    <description>Read an Aegis VPN handshake time</description>
+    <message>Aegis VPN needs permission to read its latest handshake time</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/aegis-vpn/aegis-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">handshake</annotate>
   </action>
 </policyconfig>

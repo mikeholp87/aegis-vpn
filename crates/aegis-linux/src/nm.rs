@@ -50,8 +50,24 @@ pub struct NmBackend {
 /// failure, not retried for a while (no repeated Polkit prompts).
 #[derive(Default)]
 struct HandshakeCache {
+    activation: String,
+    interface: String,
     value_ms: Option<u64>,
     next_read: Option<std::time::Instant>,
+}
+
+impl HandshakeCache {
+    fn cached(
+        &self,
+        activation: &str,
+        iface: &str,
+        now: std::time::Instant,
+    ) -> Option<Option<u64>> {
+        (self.activation == activation
+            && self.interface == iface
+            && self.next_read.is_some_and(|t| now < t))
+        .then_some(self.value_ms)
+    }
 }
 
 const HANDSHAKE_EVERY: Duration = Duration::from_secs(10);
@@ -110,19 +126,21 @@ impl NmBackend {
 
     /// Newest peer handshake (unix ms) via the root helper, `None` when it
     /// cannot be read. Never invented: absent means unknown.
-    async fn last_handshake(&self, iface: Option<&str>) -> Option<u64> {
+    async fn last_handshake(&self, activation: &str, iface: Option<&str>) -> Option<u64> {
         let iface = iface?;
         if !matches!(crate::killswitch::handshake_support(), Support::Supported) {
             return None;
         }
         {
             let c = self.handshake.lock().unwrap_or_else(|p| p.into_inner());
-            if c.next_read.is_some_and(|t| std::time::Instant::now() < t) {
-                return c.value_ms;
+            if let Some(value) = c.cached(activation, iface, std::time::Instant::now()) {
+                return value;
             }
         }
         let read = crate::killswitch::run_capture(vec!["handshake".into(), iface.to_owned()]).await;
         let mut c = self.handshake.lock().unwrap_or_else(|p| p.into_inner());
+        c.activation = activation.to_owned();
+        c.interface = iface.to_owned();
         match read.ok().and_then(|t| t.trim().parse::<u64>().ok()) {
             Some(secs) => {
                 c.value_ms = (secs > 0).then_some(secs * 1000);
@@ -352,7 +370,7 @@ impl VpnBackend for NmBackend {
     }
 
     async fn status(&self) -> Result<Option<TunnelStatus>> {
-        let Some((_, id, state, devices)) = self.active().await?.into_iter().next() else {
+        let Some((activation, id, state, devices)) = self.active().await?.into_iter().next() else {
             return Ok(None);
         };
         let mut interface = None;
@@ -366,7 +384,8 @@ impl VpnBackend for NmBackend {
         }
         let (rx_bytes, tx_bytes) = interface.as_deref().map(read_counters).unwrap_or((0, 0));
         let last_handshake_ms = if state == ACTIVATED {
-            self.last_handshake(interface.as_deref()).await
+            self.last_handshake(activation.as_str(), interface.as_deref())
+                .await
         } else {
             None
         };
@@ -412,31 +431,28 @@ impl VpnBackend for NmBackend {
         crate::killswitch::run(vec!["remove".into()]).await
     }
 
-    async fn kill_switch_active(&self) -> bool {
-        crate::killswitch::active()
+    async fn kill_switch_active(&self) -> Result<bool> {
+        crate::killswitch::active().await
     }
 
-    async fn check_reachability(
-        &self,
-        profile: &ProfileSummary,
-        _status: &TunnelStatus,
-    ) -> Feature {
-        let Some(server) = tunnel_dns(profile) else {
+    async fn check_reachability(&self, profile: &ProfileSummary, status: &TunnelStatus) -> Feature {
+        let Some((server, iface, source)) = tunnel_dns(profile, status) else {
             return Feature::Unsupported("the profile has no DNS server inside the tunnel".into());
         };
-        let rcode = tokio::task::spawn_blocking(move || verify::lookup(server))
+        let rcode = tokio::task::spawn_blocking(move || verify::lookup(server, &iface, source))
             .await
             .unwrap_or(None);
         verify::judge_reachability(rcode)
     }
 
-    async fn check_public_ip(&self, profile: &ProfileSummary, _status: &TunnelStatus) -> Feature {
-        let Some(server) = tunnel_dns(profile) else {
+    async fn check_public_ip(&self, profile: &ProfileSummary, status: &TunnelStatus) -> Feature {
+        let Some((server, iface, source)) = tunnel_dns(profile, status) else {
             return Feature::Unsupported("the profile has no DNS server inside the tunnel".into());
         };
-        let addrs = tokio::task::spawn_blocking(move || verify::lookup_public_ip(server))
-            .await
-            .unwrap_or(None);
+        let addrs =
+            tokio::task::spawn_blocking(move || verify::lookup_public_ip(server, &iface, source))
+                .await
+                .unwrap_or(None);
         verify::judge_public_ip(addrs)
     }
 
@@ -495,19 +511,22 @@ impl NmBackend {
         if let Some(ns) = verify::parse_resolv_conf(&text) {
             return Resolver::Plain(ns);
         }
-        let domains = async {
-            Proxy::new(
+        let resolver = async {
+            let proxy = Proxy::new(
                 &self.conn,
                 "org.freedesktop.resolve1",
                 "/org/freedesktop/resolve1",
                 "org.freedesktop.resolve1.Manager",
             )
-            .await?
-            .get_property::<Vec<(i32, String, bool)>>("Domains")
-            .await
+            .await?;
+            let (domains, dns) = tokio::try_join!(
+                proxy.get_property::<Vec<(i32, String, bool)>>("Domains"),
+                proxy.get_property::<Vec<(i32, i32, Vec<u8>)>>("DNS"),
+            )?;
+            Ok::<_, zbus::Error>(Resolver::Resolved { domains, dns })
         };
-        match tokio::time::timeout(Duration::from_secs(2), domains).await {
-            Ok(Ok(d)) => Resolver::Resolved(d),
+        match tokio::time::timeout(Duration::from_secs(2), resolver).await {
+            Ok(Ok(resolver)) => resolver,
             Ok(Err(e)) => Resolver::Unknown(format!("systemd-resolved did not answer: {e}")),
             Err(_) => Resolver::Unknown("systemd-resolved did not answer in time".into()),
         }
@@ -537,7 +556,14 @@ fn parse_active(
 }
 
 /// DNS server that the kernel would reach through this tunnel's addresses.
-fn tunnel_dns(profile: &ProfileSummary) -> Option<std::net::IpAddr> {
+fn tunnel_dns(
+    profile: &ProfileSummary,
+    status: &TunnelStatus,
+) -> Option<(std::net::IpAddr, String, std::net::IpAddr)> {
+    let iface = status.interface.as_ref()?;
+    if iface != &settings::iface_name(status.id) {
+        return None;
+    }
     let addrs: Vec<std::net::IpAddr> = profile
         .addresses
         .iter()
@@ -548,7 +574,13 @@ fn tunnel_dns(profile: &ProfileSummary) -> Option<std::net::IpAddr> {
         .dns
         .iter()
         .filter_map(|d| d.parse::<std::net::IpAddr>().ok())
-        .find(|d| verify::probe(*d, &addrs) == verify::RouteProbe::Tunnel)
+        .find_map(|d| {
+            if verify::probe(d, &addrs) != verify::RouteProbe::Tunnel {
+                return None;
+            }
+            let source = addrs.iter().copied().find(|a| a.is_ipv6() == d.is_ipv6())?;
+            Some((d, iface.clone(), source))
+        })
 }
 
 fn profile_protection(profile: &ProfileSummary, settings: &AppSettings) -> Protection {
@@ -621,6 +653,33 @@ fn profile_protection(profile: &ProfileSummary, settings: &AppSettings) -> Prote
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn handshake_cache_is_scoped_to_one_activation() {
+        let now = std::time::Instant::now();
+        let cache = HandshakeCache {
+            activation: "/ActiveConnection/1".into(),
+            interface: "aegis-11111111".into(),
+            value_ms: Some(1000),
+            next_read: Some(now + HANDSHAKE_EVERY),
+        };
+        assert_eq!(
+            cache.cached("/ActiveConnection/1", "aegis-11111111", now),
+            Some(Some(1000))
+        );
+        assert_eq!(
+            cache.cached("/ActiveConnection/2", "aegis-11111111", now),
+            None
+        );
+        assert_eq!(
+            cache.cached(
+                "/ActiveConnection/1",
+                "aegis-11111111",
+                now + HANDSHAKE_EVERY
+            ),
+            None
+        );
+    }
 
     #[test]
     fn versions() {

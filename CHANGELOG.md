@@ -1,6 +1,14 @@
 # Changelog
 
 ## Unreleased
+
+- Guard Windows pipe startup until service authentication exists.
+- Recheck Linux firewall protection and stop the tunnel on detected loss.
+- Bind connected-tunnel DNS probes to WireGuard and check resolver link servers.
+- Preserve untracked backend credentials and restore the previous config after
+  a failed metadata write.
+- Synchronize tray and Settings, and isolate temporary simulation data.
+- Add a manual Linux preview packaging workflow and release evidence checklist.
 - Locations directory with ISO country metadata and bundled licensed flags
 - Persistent server/country favorites, recent peer-confirmed history and Quick Connect
 - Import/manual profile workflows with country assignment and key-registration gating

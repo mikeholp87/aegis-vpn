@@ -55,7 +55,8 @@ function Shell() {
           role="alert"
           className="border-b border-pending/40 bg-pending-soft px-4 py-1.5 text-[13px] text-pending"
         >
-          Simulated backend. No real tunnel is created and your traffic is not protected.
+          Simulated backend. Profiles are temporary. No real tunnel is created and your traffic is not
+          protected.
         </div>
       )}
       <div className="flex min-h-0 flex-1">

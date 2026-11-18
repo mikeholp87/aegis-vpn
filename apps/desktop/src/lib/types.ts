@@ -107,6 +107,7 @@ export interface Stats {
   rx_rate_bps: number;
   tx_rate_bps: number;
   last_handshake_ms: number | null;
+  last_response_ms: number | null;
   interface: string | null;
   sampled_ms: number;
 }
@@ -200,4 +201,5 @@ export interface AppInfo {
 export type EngineEvent =
   | { type: "snapshot"; data: Snapshot }
   | { type: "log"; data: LogEntry }
-  | { type: "profiles_changed" };
+  | { type: "profiles_changed" }
+  | { type: "settings_changed"; data: Settings };

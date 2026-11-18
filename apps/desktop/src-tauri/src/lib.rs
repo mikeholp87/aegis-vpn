@@ -29,12 +29,19 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
-            let dir = app.path().app_data_dir()?;
-            let engine = tauri::async_runtime::block_on(async {
-                let backend = backend::select(&dir).await;
-                Engine::start(backend, &dir).await
-            })
-            .map_err(|e| format!("failed to start: {e}"))?;
+            let backend = tauri::async_runtime::block_on(backend::select());
+            let dir = if matches!(backend, backend::AnyBackend::Mock(_)) {
+                let simulation = tempfile::Builder::new()
+                    .prefix("aegis-simulation-")
+                    .tempdir()?;
+                let path = simulation.path().to_path_buf();
+                app.manage(simulation);
+                path
+            } else {
+                app.path().app_data_dir()?
+            };
+            let engine = tauri::async_runtime::block_on(Engine::start(backend, &dir))
+                .map_err(|e| format!("failed to start: {e}"))?;
 
             let tray_available = match tray::create(app.handle(), &engine) {
                 Ok(()) => true,
@@ -146,7 +153,10 @@ fn forward_events(app: tauri::AppHandle, engine: Arc<Engine<backend::AnyBackend>
                 last = Some(s.state.clone());
                 tray::refresh(&app, &engine);
             }
-            if matches!(ev, EngineEvent::ProfilesChanged) {
+            if matches!(
+                ev,
+                EngineEvent::ProfilesChanged | EngineEvent::SettingsChanged(_)
+            ) {
                 tray::refresh(&app, &engine);
             }
             let _ = app.emit("engine", &ev);

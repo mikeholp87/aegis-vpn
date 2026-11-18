@@ -35,9 +35,10 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --all-targets --locked
       - run: cargo test -p aegis-desktop --test glib_security --release --locked
-      - run: shellcheck scripts/test-netns-peer.sh scripts/test-netns-peer.test.sh scripts/vm/run-vm-tests.sh
-      - run: shfmt -d scripts/test-netns-peer.sh scripts/test-netns-peer.test.sh scripts/vm/run-vm-tests.sh
+      - run: shellcheck scripts/test-netns-peer.sh scripts/test-netns-peer.test.sh scripts/vm/run-vm-tests.sh scripts/install-helper.sh scripts/install-helper.test.sh
+      - run: shfmt -d scripts/test-netns-peer.sh scripts/test-netns-peer.test.sh scripts/vm/run-vm-tests.sh scripts/install-helper.sh scripts/install-helper.test.sh
       - run: bash scripts/test-netns-peer.test.sh
+      - run: bash scripts/install-helper.test.sh
 
   frontend:
     name: Frontend lint, typecheck, tests

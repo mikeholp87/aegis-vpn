@@ -24,7 +24,7 @@ crates/aegis-core     Engine (state machine, reconnect, recovery), VpnBackend tr
                       ProfileDraft, Store (non-secret JSON), registry (location metadata on profiles),
                       diagnostics, MockBackend
 crates/aegis-linux    NetworkManager backend over D-Bus (zbus), settings mapping
-crates/aegis-windows  Windows backend: pipe protocol + client (round-trip tested against the service pipe; D16)
+crates/aegis-windows  Windows pipe protocol and test client. Desktop use awaits server authentication (D16).
 apps/desktop          React UI (src/), Tauri shell (src-tauri/)
 scripts/              test-netns-peer.sh: isolated WireGuard peer for live tests
 services/linux-helper aegis-helper: the only root code (pkexec), kill-switch nftables table
@@ -67,7 +67,7 @@ scripts/vm/run-vm-tests.sh                   # full-tunnel/leak suite in a dispo
 6. **Mock is opt-in and labelled.** Only `AEGIS_BACKEND=mock` selects it; the
    UI shows a persistent banner. If no real backend works, report it as
    unavailable; never fall back to the mock.
-7. **Touch only what we own.** NM connections are ours only if
+7. **Touch only what we own.** Preserve backend profiles missing local metadata. NM connections are ours only if
    `settings::owned_profile` says so (type wireguard + uuid + `aegis-` iface).
    Firewall work must use a dedicated nftables table; never flush global state.
 8. **Never claim untested results.** Update `TEST_RESULTS.md` with what you
@@ -101,3 +101,5 @@ scripts/vm/run-vm-tests.sh                   # full-tunnel/leak suite in a dispo
 - Preflight a switch before teardown, retain cancellation throughout preflight,
   and refuse protected switching until continuous protection is implemented.
 - Usage, platform gaps and provisioning boundaries: `docs/features/LOCATIONS.md`.
+
+See the [release checklist](docs/releases/RELEASE_CHECKLIST.md) for native validation gates.

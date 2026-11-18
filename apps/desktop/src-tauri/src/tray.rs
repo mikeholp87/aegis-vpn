@@ -51,10 +51,25 @@ fn build_menu(app: &AppHandle, engine: &Engine<AnyBackend>) -> tauri::Result<Men
         app,
         "connect",
         connect_label,
-        idle && preferred.is_some(),
+        idle && engine.capabilities().available.is_supported()
+            && preferred.is_some_and(|p| aegis_core::registry::eligible(&p.meta)),
         None::<&str>,
     )?;
-    let disconnect = MenuItem::with_id(app, "disconnect", "Disconnect", !idle, None::<&str>)?;
+    let blocking = matches!(
+        snap.protection.kill_switch,
+        aegis_core::Feature::Verified(_)
+    );
+    let disconnect = MenuItem::with_id(
+        app,
+        "disconnect",
+        if idle && blocking {
+            "Stop blocking"
+        } else {
+            "Disconnect"
+        },
+        !idle || blocking,
+        None::<&str>,
+    )?;
 
     // Prefer-profile changes take the engine op lock; disable while a
     // connect/disconnect/uncertain session is in progress so Busy is not a
