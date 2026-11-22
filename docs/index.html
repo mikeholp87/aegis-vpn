@@ -6,22 +6,26 @@
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#edeff5" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0f1117" media="(prefers-color-scheme: dark)">
-  <title>Aegis VPN: a WireGuard client that shows what is protected</title>
+  <title>Aegis VPN: open source WireGuard client for Linux</title>
   <meta name="description" content="A free, open source WireGuard desktop client built with Rust and Tauri. Import your own configs, then see what is actually confirmed: server answered, DNS and IPv6 checked, kill switch verified. Linux preview; Windows is not ready.">
+  <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://mikeholp87.github.io/aegis-vpn/">
   <link rel="icon" href="./aegis-vpn.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./site.css">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Aegis VPN">
-  <meta property="og:title" content="Aegis VPN: a WireGuard client that shows what is protected">
+  <meta property="og:title" content="Aegis VPN: open source WireGuard client for Linux">
   <meta property="og:description" content="Open source WireGuard client for Linux. Bring your own servers. Status shows what is confirmed, not a single green badge. Pre-alpha.">
   <meta property="og:url" content="https://mikeholp87.github.io/aegis-vpn/">
-  <meta property="og:image" content="https://mikeholp87.github.io/aegis-vpn/screenshot.png">
+  <meta property="og:image" content="https://mikeholp87.github.io/aegis-vpn/og.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:locale" content="en_US">
   <meta property="og:image:alt" content="Aegis VPN dashboard connected to a demo server, with the kill switch, DNS leak and IPv6 protection shown as verified, in the dark theme">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Aegis VPN: a WireGuard client that shows what is protected">
+  <meta name="twitter:title" content="Aegis VPN: open source WireGuard client for Linux">
   <meta name="twitter:description" content="Open source WireGuard client for Linux, built with Rust and Tauri. Bring your own servers. Pre-alpha.">
-  <meta name="twitter:image" content="https://mikeholp87.github.io/aegis-vpn/screenshot.png">
+  <meta name="twitter:image" content="https://mikeholp87.github.io/aegis-vpn/og.jpg">
   <meta name="twitter:image:alt" content="Aegis VPN dashboard connected to a demo server, in the dark theme">
   <script type="application/ld+json">
   {
@@ -54,7 +58,7 @@
     </header>
     <main id="content">
       <section class="hero" aria-labelledby="hero-title">
-        <p class="status">Free and open source. Version 0.1.0 pre-alpha.</p>
+        <p class="status">Free and open source WireGuard client for Linux. Version 0.1.0 pre-alpha.</p>
         <h1 id="hero-title">A WireGuard client that shows what is protected.</h1>
         <p class="lead">Aegis connects the WireGuard configuration you already have and tells you, step by step, what it has confirmed: the tunnel is up, the server answered, DNS and IPv6 do not leak, the kill switch is blocking. It brings no servers of its own and uses no account.</p>
         <div class="actions">
@@ -66,8 +70,8 @@
         </ul>
         <figure class="workspace">
           <picture>
-            <source media="(prefers-color-scheme: light)" srcset="./screenshot-light.png">
-            <img src="./screenshot.png" width="1800" height="1161" fetchpriority="high" alt="Aegis VPN dashboard connected to a demo server in Zurich. The path shows this device, tunnel interface, server response and internet reachability as confirmed. Kill switch, DNS leak protection and IPv6 protection are all verified.">
+            <source media="(prefers-color-scheme: light)" srcset="./screenshot-light.webp">
+            <img src="./screenshot.webp" width="1800" height="1161" fetchpriority="high" alt="Aegis VPN dashboard connected to a demo server in Zurich. The path shows this device, tunnel interface, server response and internet reachability as confirmed. Kill switch, DNS leak protection and IPv6 protection are all verified.">
           </picture>
           <figcaption>The real Aegis dashboard, filled with demo data and documentation addresses. It is not a live server.</figcaption>
         </figure>
@@ -91,8 +95,8 @@
       <section class="section" id="screenshots" aria-labelledby="screenshots-title">
         <div class="section-head"><h2 id="screenshots-title">Light and dark, one design</h2><p>The interface follows your system theme. Both screens below use demo data only.</p></div>
         <div class="shots-grid">
-          <figure class="shot"><a href="./screenshot-light.png"><img src="./screenshot-light.png" width="1800" height="1161" loading="lazy" alt="Aegis VPN dashboard in the light theme, connected to a demo server"></a><figcaption>Dashboard in the light theme. Open the image for a full-size view.</figcaption></figure>
-          <figure class="shot"><a href="./screenshot-locations.png"><img src="./screenshot-locations.png" width="1800" height="1161" loading="lazy" alt="Aegis VPN Locations screen in the dark theme, listing five demo countries with one server each"></a><figcaption>Locations in the dark theme, with a country list and the selected server.</figcaption></figure>
+          <figure class="shot"><a href="./screenshot-light.webp"><img src="./screenshot-light.webp" width="1800" height="1161" loading="lazy" alt="Aegis VPN dashboard in the light theme, connected to a demo server"></a><figcaption>Dashboard in the light theme. Open the image for a full-size view.</figcaption></figure>
+          <figure class="shot"><a href="./screenshot-locations.webp"><img src="./screenshot-locations.webp" width="1800" height="1161" loading="lazy" alt="Aegis VPN Locations screen in the dark theme, listing five demo countries with one server each"></a><figcaption>Locations in the dark theme, with a country list and the selected server.</figcaption></figure>
         </div>
         <p class="note">The app runs in the system tray, reconnects automatically with a bounded back-off, and exports a diagnostics bundle with keys removed.</p>
       </section>
