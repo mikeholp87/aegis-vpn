@@ -35,7 +35,7 @@
   "description": "A desktop WireGuard client for Linux built with Rust and Tauri. It imports your own WireGuard configurations and reports which protections it has verified.",
   "applicationCategory": "SecurityApplication",
   "operatingSystem": "Linux",
-  "softwareVersion": "0.1.0",
+  "softwareVersion": "@VERSION@",
   "url": "https://mikeholp87.github.io/aegis-vpn/",
   "sameAs": "https://github.com/mikeholp87/aegis-vpn",
   "license": "https://github.com/mikeholp87/aegis-vpn#license",
@@ -49,7 +49,7 @@
       "https://www.ai-automation-station.com/"
     ]
   },
-  "dateModified": "2026-11-22",
+  "dateModified": "@DATE@",
   "downloadUrl": "https://github.com/mikeholp87/aegis-vpn#install"
 }
 </script>
@@ -90,7 +90,7 @@
 <div class="section-head">
 <h2 id="what-is-title">What is Aegis VPN?</h2>
 <p>Aegis VPN is a free, open source WireGuard client for Linux, built with Rust and Tauri 2. You import the WireGuard configuration you already have; Aegis brings no servers of its own and needs no account. Instead of one green badge, it shows each protection as Off, Unsupported, Configured, Verified or Failed, and reports Verified only after a real check: the tunnel is up, the server answered, and DNS and IPv6 do not leak. An optional kill switch uses a small Polkit-started helper that installs an nftables table blocking everything except the tunnel and its server. Config files containing PostUp-style scripts are rejected instead of run. Aegis uses the official WireGuard protocol with no custom cryptography, collects no telemetry and is licensed MIT or Apache-2.0. It is version 0.1.0, a pre-alpha Linux preview that has not been independently audited, and there is no Windows build yet.</p>
-<p><small>Version 0.1.0 · Updated November 22, 2026</small></p>
+<p><small>Version @VERSION@ · Released @DATE_HUMAN@</small></p>
 </div>
 </section>
 

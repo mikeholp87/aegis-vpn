@@ -11,6 +11,7 @@ on:
       - docs/sitemap.xml
       - docs/aegis-vpn.svg
       - .github/workflows/pages.yml
+      - scripts/stamp-site.sh
   workflow_dispatch:
 permissions:
   contents: read
@@ -27,6 +28,10 @@ jobs:
         run: |
           mkdir -p _site
           cp docs/index.html docs/site.css docs/*.webp docs/og.jpg docs/robots.txt docs/sitemap.xml docs/aegis-vpn.svg _site/
+      - name: Stamp version and release date
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/stamp-site.sh _site/index.html "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
