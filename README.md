@@ -270,3 +270,7 @@ dependencies and checksum, then use the matching package manager on a
 disposable test system. Disconnect and remove any remaining firewall block
 before uninstalling. See the [release checklist](docs/releases/RELEASE_CHECKLIST.md)
 and [remediation report](docs/audits/REMEDIATION_REPORT.md).
+
+## Author
+
+Built by [Mike Holp](https://www.ai-automation-station.com/about.html) with AI coding tools. See the build guide on [AI Automation Station](https://www.ai-automation-station.com/guides/aegis-vpn-claude-code.html), and more projects at [github.com/mikeholp87](https://github.com/mikeholp87).
