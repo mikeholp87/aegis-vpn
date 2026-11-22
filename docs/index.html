@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#edeff5" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0f1117" media="(prefers-color-scheme: dark)">
   <title>Aegis VPN: open source WireGuard client for Linux</title>
-  <meta name="description" content="A free, open source WireGuard desktop client built with Rust and Tauri. Import your own configs, then see what is actually confirmed: server answered, DNS and IPv6 checked, kill switch verified. Linux preview; Windows is not ready.">
+  <meta name="description" content="Aegis VPN is a free, open source WireGuard client for Linux. Bring your own config; it shows which protections are verified. Pre-alpha, Rust and Tauri.">
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://mikeholp87.github.io/aegis-vpn/">
   <link rel="icon" href="./aegis-vpn.svg" type="image/svg+xml">
@@ -28,21 +28,31 @@
   <meta name="twitter:image" content="https://mikeholp87.github.io/aegis-vpn/og.jpg">
   <meta name="twitter:image:alt" content="Aegis VPN dashboard connected to a demo server, in the dark theme">
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "Aegis VPN",
-    "description": "A desktop WireGuard client for Linux built with Rust and Tauri. It imports your own WireGuard configurations and reports which protections it has verified.",
-    "applicationCategory": "SecurityApplication",
-    "operatingSystem": "Linux",
-    "softwareVersion": "0.1.0 pre-alpha",
-    "url": "https://mikeholp87.github.io/aegis-vpn/",
-    "sameAs": "https://github.com/mikeholp87/aegis-vpn",
-    "license": "https://github.com/mikeholp87/aegis-vpn#license",
-    "isAccessibleForFree": true,
-    "author": { "@type": "Person", "name": "Mike Holp", "url": "https://www.ai-automation-station.com/about.html", "sameAs": ["https://github.com/mikeholp87", "https://www.ai-automation-station.com/"] }
-  }
-  </script>
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Aegis VPN",
+  "description": "A desktop WireGuard client for Linux built with Rust and Tauri. It imports your own WireGuard configurations and reports which protections it has verified.",
+  "applicationCategory": "SecurityApplication",
+  "operatingSystem": "Linux",
+  "softwareVersion": "0.1.0",
+  "url": "https://mikeholp87.github.io/aegis-vpn/",
+  "sameAs": "https://github.com/mikeholp87/aegis-vpn",
+  "license": "https://github.com/mikeholp87/aegis-vpn#license",
+  "isAccessibleForFree": true,
+  "author": {
+    "@type": "Person",
+    "name": "Mike Holp",
+    "url": "https://www.ai-automation-station.com/about.html",
+    "sameAs": [
+      "https://github.com/mikeholp87",
+      "https://www.ai-automation-station.com/"
+    ]
+  },
+  "dateModified": "2026-11-22",
+  "downloadUrl": "https://github.com/mikeholp87/aegis-vpn#install"
+}
+</script>
 </head>
 <body>
   <a class="skip" href="#content">Skip to content</a>
@@ -76,6 +86,14 @@
           <figcaption>The real Aegis dashboard, filled with demo data and documentation addresses. It is not a live server.</figcaption>
         </figure>
       </section>
+<section id="what-is" class="section" aria-labelledby="what-is-title">
+<div class="section-head">
+<h2 id="what-is-title">What is Aegis VPN?</h2>
+<p>Aegis VPN is a free, open source WireGuard client for Linux, built with Rust and Tauri 2. You import the WireGuard configuration you already have; Aegis brings no servers of its own and needs no account. Instead of one green badge, it shows each protection as Off, Unsupported, Configured, Verified or Failed, and reports Verified only after a real check: the tunnel is up, the server answered, and DNS and IPv6 do not leak. An optional kill switch uses a small Polkit-started helper that installs an nftables table blocking everything except the tunnel and its server. Config files containing PostUp-style scripts are rejected instead of run. Aegis uses the official WireGuard protocol with no custom cryptography, collects no telemetry and is licensed MIT or Apache-2.0. It is version 0.1.0, a pre-alpha Linux preview that has not been independently audited, and there is no Windows build yet.</p>
+<p><small>Version 0.1.0 · Updated November 22, 2026</small></p>
+</div>
+</section>
+
 
       <section class="section" id="features" aria-labelledby="features-title">
         <div class="section-head">
