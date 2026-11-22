@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#edeff5" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0f1117" media="(prefers-color-scheme: dark)">
+  <title>Aegis VPN: a WireGuard client that shows what is protected</title>
+  <meta name="description" content="A free, open source WireGuard desktop client built with Rust and Tauri. Import your own configs, then see what is actually confirmed: server answered, DNS and IPv6 checked, kill switch verified. Linux preview; Windows is not ready.">
+  <link rel="canonical" href="https://mikeholp87.github.io/aegis-vpn/">
+  <link rel="icon" href="./aegis-vpn.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./site.css">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Aegis VPN">
+  <meta property="og:title" content="Aegis VPN: a WireGuard client that shows what is protected">
+  <meta property="og:description" content="Open source WireGuard client for Linux. Bring your own servers. Status shows what is confirmed, not a single green badge. Pre-alpha.">
+  <meta property="og:url" content="https://mikeholp87.github.io/aegis-vpn/">
+  <meta property="og:image" content="https://mikeholp87.github.io/aegis-vpn/screenshot.png">
+  <meta property="og:image:alt" content="Aegis VPN dashboard connected to a demo server, with the kill switch, DNS leak and IPv6 protection shown as verified, in the dark theme">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Aegis VPN: a WireGuard client that shows what is protected">
+  <meta name="twitter:description" content="Open source WireGuard client for Linux, built with Rust and Tauri. Bring your own servers. Pre-alpha.">
+  <meta name="twitter:image" content="https://mikeholp87.github.io/aegis-vpn/screenshot.png">
+  <meta name="twitter:image:alt" content="Aegis VPN dashboard connected to a demo server, in the dark theme">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Aegis VPN",
+    "description": "A desktop WireGuard client for Linux built with Rust and Tauri. It imports your own WireGuard configurations and reports which protections it has verified.",
+    "applicationCategory": "SecurityApplication",
+    "operatingSystem": "Linux",
+    "softwareVersion": "0.1.0 pre-alpha",
+    "url": "https://mikeholp87.github.io/aegis-vpn/",
+    "sameAs": "https://github.com/mikeholp87/aegis-vpn",
+    "license": "https://github.com/mikeholp87/aegis-vpn#license",
+    "isAccessibleForFree": true,
+    "author": {"@type": "Person", "name": "Mike Holp"}
+  }
+  </script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <div class="wrap">
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Aegis VPN home"><img src="./aegis-vpn.svg" alt="" width="36" height="36">Aegis VPN</a>
+      <nav class="nav" aria-label="Main navigation">
+        <a class="hide-small" href="#features">Features</a>
+        <a class="hide-small" href="#screenshots">Screenshots</a>
+        <a href="#install">Install</a>
+        <a class="pill" href="https://github.com/mikeholp87/aegis-vpn">GitHub</a>
+      </nav>
+    </header>
+    <main id="content">
+      <section class="hero" aria-labelledby="hero-title">
+        <p class="status">Free and open source. Version 0.1.0 pre-alpha.</p>
+        <h1 id="hero-title">A WireGuard client that shows what is protected.</h1>
+        <p class="lead">Aegis connects the WireGuard configuration you already have and tells you, step by step, what it has confirmed: the tunnel is up, the server answered, DNS and IPv6 do not leak, the kill switch is blocking. It brings no servers of its own and uses no account.</p>
+        <div class="actions">
+          <a class="button" href="#install">Install on Linux</a>
+          <a class="button secondary" href="https://github.com/mikeholp87/aegis-vpn">View on GitHub</a>
+        </div>
+        <ul class="badges" aria-label="Project highlights">
+          <li>Rust and Tauri 2</li><li>Official WireGuard, no custom crypto</li><li>No telemetry or account</li><li>MIT or Apache-2.0</li>
+        </ul>
+        <figure class="workspace">
+          <picture>
+            <source media="(prefers-color-scheme: light)" srcset="./screenshot-light.png">
+            <img src="./screenshot.png" width="1800" height="1161" fetchpriority="high" alt="Aegis VPN dashboard connected to a demo server in Zurich. The path shows this device, tunnel interface, server response and internet reachability as confirmed. Kill switch, DNS leak protection and IPv6 protection are all verified.">
+          </picture>
+          <figcaption>The real Aegis dashboard, filled with demo data and documentation addresses. It is not a live server.</figcaption>
+        </figure>
+      </section>
+
+      <section class="section" id="features" aria-labelledby="features-title">
+        <div class="section-head">
+          <h2 id="features-title">Status you can check, not a green badge</h2>
+          <p>Each protection is Off, Unsupported, Configured, Verified or Failed. Aegis never reports one from a setting alone, and it will not connect if a protection you asked for is unavailable.</p>
+        </div>
+        <div class="feature-grid">
+          <article class="card"><h3>Bring your own configuration</h3><p>Import a standard WireGuard <code>.conf</code> by file picker or drag and drop. Files with <code>PostUp</code>-style scripts are rejected instead of run. Private keys stay out of the interface.</p></article>
+          <article class="card"><h3>Three separate answers</h3><p>“Tunnel up” only means the interface exists. Aegis then waits for the server to answer, and checks that the tunnel’s DNS server resolves a name before it calls the internet reachable.</p></article>
+          <article class="card"><h3>DNS and IPv6 checks</h3><p>After connecting, Aegis inspects the routes and resolver and shows Verified or Failed. IPv4-only tunnels get an IPv6 block so nothing leaves outside the tunnel.</p></article>
+          <article class="card"><h3>Kill switch on Linux</h3><p>Optional. A small helper, started through Polkit, installs an nftables table that blocks everything except the tunnel and its server. Local network access is off by default and the block is removed on disconnect.</p></article>
+          <article class="card"><h3>Locations for your servers</h3><p>Group the servers you configure by country, mark favorites, and use Quick Connect. Locations are labels you assign. Aegis never invents a distance, speed or load.</p></article>
+          <article class="card"><h3>Sleep and network changes</h3><p>After a resume or a change of network, Aegis asks the server again and shows “No reply from the server” until it answers. It does not leave a stale confirmation on screen.</p></article>
+        </div>
+      </section>
+
+      <section class="section" id="screenshots" aria-labelledby="screenshots-title">
+        <div class="section-head"><h2 id="screenshots-title">Light and dark, one design</h2><p>The interface follows your system theme. Both screens below use demo data only.</p></div>
+        <div class="shots-grid">
+          <figure class="shot"><a href="./screenshot-light.png"><img src="./screenshot-light.png" width="1800" height="1161" loading="lazy" alt="Aegis VPN dashboard in the light theme, connected to a demo server"></a><figcaption>Dashboard in the light theme. Open the image for a full-size view.</figcaption></figure>
+          <figure class="shot"><a href="./screenshot-locations.png"><img src="./screenshot-locations.png" width="1800" height="1161" loading="lazy" alt="Aegis VPN Locations screen in the dark theme, listing five demo countries with one server each"></a><figcaption>Locations in the dark theme, with a country list and the selected server.</figcaption></figure>
+        </div>
+        <p class="note">The app runs in the system tray, reconnects automatically with a bounded back-off, and exports a diagnostics bundle with keys removed.</p>
+      </section>
+
+      <section class="section" id="platforms" aria-labelledby="platforms-title">
+        <div class="section-head"><h2 id="platforms-title">A Linux preview, no Windows yet</h2><p>This is pre-alpha software and has not been independently audited. The table lists what has actually been run.</p></div>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Platform status, horizontally scrollable">
+          <table aria-labelledby="platforms-title">
+            <thead><tr><th scope="col">Platform</th><th scope="col">Status</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Linux with NetworkManager</th><td>Works. Full tunnel, DNS and IPv6 leak tests, the kill switch and reconnect passed in a Debian 13 virtual machine, and a split-route test passed on a Debian/KDE desktop. Not yet run on hardware: real suspend and resume, Wi-Fi roaming, and the Ubuntu and Fedora resolver setups.</td></tr>
+              <tr><th scope="row">Linux without NetworkManager</th><td>Not supported. The app shows the backend as unavailable.</td></tr>
+              <tr><th scope="row">Windows 11</th><td>Not usable. The service and tunnel are not implemented, so the app reports the backend as unavailable instead of pretending to connect.</td></tr>
+              <tr><th scope="row">macOS</th><td>Not planned.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">Test results, including failures, are kept in <a href="https://github.com/mikeholp87/aegis-vpn/blob/main/docs/testing/TEST_RESULTS.md">TEST_RESULTS.md</a>.</p>
+      </section>
+
+      <section class="section" id="install" aria-labelledby="install-title">
+        <div class="build-panel">
+          <div class="section-head"><h2 id="install-title">Install on Linux</h2><p>There is no published release yet, so you build it from source. You need NetworkManager, Rust, Node 24 and pnpm. The commands below are for Debian and Ubuntu; <a href="https://github.com/mikeholp87/aegis-vpn/blob/main/docs/development/LINUX.md">the Linux guide</a> lists the Fedora package names.</p></div>
+          <h3>1. Install the build dependencies</h3>
+          <pre tabindex="0" role="region" aria-label="Install build dependencies"><code>sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev \
+  libayatana-appindicator3-dev librsvg2-dev libssl-dev network-manager \
+  wireguard-tools systemd-resolved</code></pre>
+          <h3>2. Get the code and run it</h3>
+          <pre tabindex="0" role="region" aria-label="Clone and run Aegis VPN"><code>git clone https://github.com/mikeholp87/aegis-vpn.git
+cd aegis-vpn/apps/desktop
+pnpm install
+pnpm tauri dev</code></pre>
+          <p>Aegis creates tunnels in NetworkManager named <code>Aegis: &lt;name&gt;</code>. Then use <strong>Locations → Add server → Import WireGuard Configuration</strong>, pick your <code>.conf</code>, and click <strong>Connect</strong>. Wait for “Server answered”.</p>
+          <details><summary>Turn on the kill switch</summary><p>The kill switch needs the root helper and its Polkit policy. Install them from the repository root, then reopen Aegis. Your server endpoint must be an IP address, not a host name.</p>
+            <pre tabindex="0" role="region" aria-label="Install the kill switch helper"><code>cargo build --release -p aegis-helper --locked
+sudo scripts/install-helper.sh install target/release/aegis-helper</code></pre>
+            <p>To remove it, run <code>sudo scripts/install-helper.sh uninstall</code>. That also removes any firewall block first.</p>
+          </details>
+          <details><summary>Protect your config file</summary><p>A downloaded <code>.conf</code> contains your private key, and browsers often save it readable by every user on the machine. Restrict it before you import it.</p>
+            <pre tabindex="0" role="region" aria-label="Restrict the config file"><code>chmod 600 ~/Downloads/your-file.conf</code></pre>
+          </details>
+          <details><summary>Try the interface without a tunnel</summary><p>The simulated backend creates no tunnel and protects nothing. The app shows a permanent banner while it is on.</p>
+            <pre tabindex="0" role="region" aria-label="Run with the simulated backend"><code>AEGIS_BACKEND=mock pnpm tauri dev</code></pre>
+          </details>
+          <p class="build-links"><a href="https://github.com/mikeholp87/aegis-vpn#readme">Full guide and troubleshooting</a><a href="https://github.com/mikeholp87/aegis-vpn/blob/main/docs/ROADMAP.md">Roadmap</a></p>
+        </div>
+      </section>
+
+      <section class="section" id="limits" aria-labelledby="limits-title">
+        <div class="section-head"><h2 id="limits-title">Know the preview’s boundaries</h2><p>Aegis lists its gaps. Please read them before you rely on it.</p></div>
+        <div class="limits-grid">
+          <div><h3>Protection</h3><p>Switching servers while the kill switch is on is refused for now. The kill switch covers this computer’s own traffic, not traffic forwarded for containers or virtual machines. DNS protection needs systemd-resolved to manage <code>/etc/resolv.conf</code>. The checks look at routes and the resolver and do not replace a packet capture.</p></div>
+          <div><h3>Scope</h3><p>Aegis is a client. You supply a configuration from a provider or from a server you run. Handshake times need the root helper; without it Aegis infers a reply from received data. Restarting NetworkManager while a full tunnel is up can leave a firewall rule behind until reboot.</p></div>
+        </div>
+        <p><a href="https://github.com/mikeholp87/aegis-vpn/blob/main/docs/security/THREAT_MODEL.md">Read the threat model</a> or see the <a href="https://github.com/mikeholp87/aegis-vpn/blob/main/SECURITY.md">security policy</a>.</p>
+      </section>
+
+      <section class="section faq" id="faq" aria-labelledby="faq-title">
+        <div class="section-head"><h2 id="faq-title">Questions</h2></div>
+        <details><summary>Does Aegis include VPN servers?</summary><p>No. You bring a WireGuard configuration from any provider that offers one, or from your own server. Aegis only connects and checks it.</p></details>
+        <details><summary>Does it send data anywhere?</summary><p>There is no telemetry or account. The optional connectivity checks do their lookups through the tunnel’s own DNS server, and Settings explains what they do. Update checks are off by default.</p></details>
+        <details><summary>Where are my keys stored?</summary><p>Private keys are kept by NetworkManager in its root-owned store and never reach the interface, the logs or the diagnostics export. The interface only learns whether a key exists.</p></details>
+        <details><summary>Is it safe to rely on?</summary><p>Not yet. It is pre-alpha, it has not been independently audited, and parts of it have only been tested in a virtual machine. Use it with a server you control and verify the result yourself.</p></details>
+        <details><summary>When will Windows work?</summary><p>There is no date. The Windows service that creates tunnels with the official WireGuard component is still to be built and tested on a Windows 11 machine. The <a href="https://github.com/mikeholp87/aegis-vpn/blob/main/docs/ROADMAP.md">roadmap</a> tracks it.</p></details>
+      </section>
+    </main>
+    <footer class="site-footer"><p>Aegis VPN by Mike Holp. Licensed MIT or Apache-2.0. WireGuard is a registered trademark of Jason A. Donenfeld; this project is not affiliated with the WireGuard project.</p><nav aria-label="Footer"><a href="https://github.com/mikeholp87/aegis-vpn">GitHub</a><a href="https://github.com/mikeholp87/aegis-vpn/blob/main/docs/testing/TEST_RESULTS.md">Test results</a><a href="https://github.com/mikeholp87/aegis-vpn/blob/main/SECURITY.md">Security</a><a href="https://github.com/mikeholp87/aegis-vpn/issues">Issues</a></nav></footer>
+  </div>
+</body>
+</html>
