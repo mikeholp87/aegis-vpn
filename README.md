@@ -1,7 +1,13 @@
 # Aegis VPN
 
+[![License](https://img.shields.io/github/license/mikeholp87/aegis-vpn)](https://github.com/mikeholp87/aegis-vpn/blob/main/LICENSE)
+
 A lightweight, open-source WireGuard® client for Linux and Windows 11, built with
 Rust, Tauri 2 and React. Working name.
+
+**Website:** <https://mikeholp87.github.io/aegis-vpn/>
+
+![Aegis VPN dashboard connected to a demo server, filled with demo data](docs/screenshot.webp)
 
 > **Status: pre-alpha.** The Linux NetworkManager backend has passed live
 > split-route tests on a desktop and full-tunnel, DNS-leak, IPv6, reconnect and
