@@ -53,7 +53,8 @@
   "downloadUrl": "https://github.com/mikeholp87/aegis-vpn#install"
 }
 </script>
-</head>
+    <style>.hero{grid-template-columns:minmax(0,1fr)!important;gap:28px!important}.demo-frame{width:100%;margin:0}.demo-frame iframe{display:block;width:100%;border:1px solid rgba(128,128,128,.35);border-radius:12px;background:transparent;box-shadow:0 24px 60px -28px rgba(0,0,0,.45)}</style>
+  </head>
 <body>
   <a class="skip" href="#content">Skip to content</a>
   <div class="wrap">
@@ -74,19 +75,12 @@
         <p class="lead">Aegis connects the WireGuard configuration you already have and tells you, step by step, what it has confirmed: the tunnel is up, the server answered, DNS and IPv6 do not leak, the kill switch is blocking. It brings no servers of its own and uses no account.</p>
         <div class="actions">
           <a class="button" href="#install">Install on Linux</a>
-<a class="button secondary" href="./demo/">Try the demo</a>
           <a class="button secondary" href="https://github.com/mikeholp87/aegis-vpn">View on GitHub</a>
         </div>
         <ul class="badges" aria-label="Project highlights">
           <li>Rust and Tauri 2</li><li>Official WireGuard, no custom crypto</li><li>No telemetry or account</li><li>MIT or Apache-2.0</li>
         </ul>
-        <figure class="workspace">
-          <picture>
-            <source media="(prefers-color-scheme: light)" srcset="./screenshot-light.webp">
-            <img src="./screenshot.webp" width="1800" height="1161" fetchpriority="high" alt="Aegis VPN dashboard connected to a demo server in Zurich. The path shows this device, tunnel interface, server response and internet reachability as confirmed. Kill switch, DNS leak protection and IPv6 protection are all verified.">
-          </picture>
-          <figcaption>The real Aegis dashboard, filled with demo data and documentation addresses. It is not a live server.</figcaption>
-        </figure>
+        <div class="demo-frame"><iframe id="demo-frame" src="./embed/" title="Interactive Aegis VPN demo with sample data" loading="lazy" height="780" data-fixed></iframe></div>
       </section>
 <section id="what-is" class="section" aria-labelledby="what-is-title">
 <div class="section-head">
@@ -280,5 +274,6 @@ sudo scripts/install-helper.sh install target/release/aegis-helper</code></pre>
     dlg.addEventListener('close', () => { document.documentElement.classList.remove('lb-open'); view.removeAttribute('src'); opener?.focus(); });
   })();
 </script>
+      <script>(function(){var f=document.getElementById("demo-frame");if(!f||f.hasAttribute("data-fixed"))return;function fit(){try{f.style.height=f.contentDocument.body.offsetHeight+2+"px"}catch(e){}}f.addEventListener("load",function(){fit();try{new ResizeObserver(fit).observe(f.contentDocument.body)}catch(e){}})})();</script>
   </body>
 </html>
